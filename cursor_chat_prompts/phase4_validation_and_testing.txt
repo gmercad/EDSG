@@ -1,0 +1,4 @@
+### Phase 4: Validation & Testing
+8. **Implement validation logic**
+9. **Write unit tests (`tests/`)**
+10. **Run linting and formatting**

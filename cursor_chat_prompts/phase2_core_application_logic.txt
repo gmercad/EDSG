@@ -1,0 +1,4 @@
+### Phase 2: Core Application Logic
+3. **Implement FastAPI app entry point (`main.py`)**
+4. **Define API routes (`routes.py`)**
+5. **Implement utility functions (`utils.py`)**

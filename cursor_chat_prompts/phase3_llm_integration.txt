@@ -1,0 +1,3 @@
+### Phase 3: LLM Integration
+6. **Integrate Langchain with OpenAI and LM Studio**
+7. **Implement snapshot generation logic**

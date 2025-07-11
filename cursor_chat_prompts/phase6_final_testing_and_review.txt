@@ -1,0 +1,3 @@
+### Phase 6: Final Testing & Review
+13. **End-to-end test of full workflow**
+14. **Document everything**
