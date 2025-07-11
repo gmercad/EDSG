@@ -1,3 +1,17 @@
 ### Phase 1: Project Setup
-1. **Initialize project structure**
-2. **Create requirements.txt**
+
+**Status: Completed**
+
+1. **Initialize project structure** ✅
+   - Project directories and files created as per PRD.
+2. **Create requirements.txt** (Replaced by Poetry)
+   - Instead of requirements.txt, the project now uses Poetry for dependency management.
+   - A `pyproject.toml` file was created with all dependencies and dev tools.
+   - The project is configured for **Python 3.12** for maximum compatibility and stability.
+   - All dependencies are installed and managed via Poetry.
+
+**Notes:**
+- Poetry provides better dependency resolution, reproducible builds, and modern Python packaging.
+- To install dependencies, use: `poetry install`
+- To run the app: `poetry run uvicorn app.main:app --reload`
+- To run tests: `poetry run pytest tests/ -v`

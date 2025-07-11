@@ -1,3 +1,10 @@
 ### Phase 5: Supabase Integration
-11. **Design Supabase schema**
-12. **Connect FastAPI to Supabase**
+
+**Status: Not Yet Completed**
+
+11. **Design Supabase schema** ⬜
+    - Supabase schema design is planned for a future phase.
+12. **Connect FastAPI to Supabase** ⬜
+    - FastAPI integration with Supabase is planned and will be implemented after schema design.
+
+Supabase integration steps are not yet complete and are scheduled for future development.

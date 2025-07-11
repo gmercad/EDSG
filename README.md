@@ -1,5 +1,7 @@
 # Economic Development Snapshot Generator
 
+> **Note:** This project requires **Python 3.12** and uses [Poetry](https://python-poetry.org/) for dependency management.
+
 A FastAPI-based application that generates comprehensive economic development snapshots using World Bank data and Large Language Models (LLMs).
 
 ## Features
@@ -34,17 +36,17 @@ economic_development_snapshot_generator/
 ├── tests/                   # Unit and integration tests
 │   ├── __init__.py
 │   └── test_utils.py
-├── requirements.txt         # Python dependencies
-├── env.example             # Environment variables template
-└── README.md               # This file
+├── pyproject.toml           # Poetry project configuration
+├── env.example              # Environment variables template
+└── README.md                # This file
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- pip (Python package manager)
+- Python 3.12
+- [Poetry](https://python-poetry.org/) (install with `pip install poetry`)
 - OpenAI API key (optional, for GPT analysis)
 - LM Studio (optional, for local Mistral-7B analysis)
 
@@ -56,18 +58,12 @@ economic_development_snapshot_generator/
    cd EDSG
    ```
 
-2. **Create a virtual environment**
+2. **Install dependencies with Poetry**
    ```cmd
-   python -m venv env
-   env\Scripts\activate
+   poetry install
    ```
 
-3. **Install dependencies**
-   ```cmd
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables**
+3. **Set up environment variables**
    ```cmd
    copy env.example .env
    ```
@@ -78,12 +74,12 @@ economic_development_snapshot_generator/
    LM_STUDIO_URL=http://localhost:1234/v1
    ```
 
-5. **Run the application**
+4. **Run the application**
    ```cmd
-   uvicorn app.main:app --reload
+   poetry run uvicorn app.main:app --reload
    ```
 
-6. **Access the application**
+5. **Access the application**
    - API Documentation: http://127.0.0.1:8000/docs
    - Web Dashboard: http://127.0.0.1:8000/
    - Health Check: http://127.0.0.1:8000/health
@@ -174,30 +170,30 @@ The application supports various World Bank economic indicators including:
 Run the test suite:
 
 ```cmd
-pytest tests/
+poetry run pytest tests/
 ```
 
 Run with coverage:
 ```cmd
-pytest tests/ --cov=app --cov-report=html
+poetry run pytest tests/ --cov=app --cov-report=html
 ```
 
 ## Development
 
 ### Code Formatting
 ```cmd
-black app/ tests/
-isort app/ tests/
+poetry run black app/ tests/
+poetry run isort app/ tests/
 ```
 
 ### Linting
 ```cmd
-flake8 app/ tests/
+poetry run flake8 app/ tests/
 ```
 
 ### Running in Development Mode
 ```cmd
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## Deployment
@@ -213,16 +209,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ### Docker Deployment (Future)
 
 ```dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY pyproject.toml .
+RUN pip install poetry && poetry install --no-root
 
 COPY . .
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ## Contributing

@@ -1,3 +1,12 @@
 ### Phase 3: LLM Integration
-6. **Integrate Langchain with OpenAI and LM Studio**
-7. **Implement snapshot generation logic**
+
+**Status: Completed**
+
+6. **Integrate Langchain with OpenAI and LM Studio** ✅
+   - Langchain integration is implemented using the latest langchain_community package.
+   - Both OpenAI and LM Studio (Mistral-7B) providers are supported and configurable.
+7. **Implement snapshot generation logic** ✅
+   - Snapshot generation logic is implemented, using LLMs to generate economic development summaries from World Bank data.
+   - Functionality is covered by tests and verified in the API.
+
+All LLM integration and snapshot generation logic is implemented and verified by passing tests.

@@ -2,7 +2,7 @@
 API routes for Economic Development Snapshot Generator
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -23,10 +23,10 @@ router = APIRouter()
 
 # Pydantic models for request/response
 class SnapshotRequest(BaseModel):
-    country_code: str
-    indicator_codes: List[str]
-    year: Optional[int] = None
-    llm_provider: Optional[str] = "openai"  # "openai" or "lm_studio"
+    country_code: str = "USA"  # United States is valid for NY.GDP.MKTP.CD
+    indicator_codes: List[str] = ["NY.GDP.MKTP.CD"]
+    year: Optional[int] = 2021
+    llm_provider: str = "openai"  # "openai" or "lm_studio"
     
 class SnapshotResponse(BaseModel):
     country_code: str
@@ -146,9 +146,9 @@ async def generate_snapshot(request: SnapshotRequest):
 
 @router.get("/data/{country_code}")
 async def get_country_data(
-    country_code: str,
-    indicators: str = Query(..., description="Comma-separated list of indicator codes"),
-    year: Optional[int] = Query(None, description="Specific year (optional)")
+    country_code: str = Path(..., description="3-letter ISO country code, e.g., 'USA' for United States"),
+    indicators: str = Query("NY.GDP.MKTP.CD", description="Comma-separated list of indicator codes"),
+    year: Optional[int] = Query(2021, description="Specific year (optional)")
 ):
     """
     Get raw World Bank data for a country and indicators
@@ -162,16 +162,25 @@ async def get_country_data(
             if not validate_indicator_code(indicator):
                 raise HTTPException(status_code=400, detail=f"Invalid indicator code: {indicator}")
         
-        data = await fetch_world_bank_data(
-            country_code=country_code,
-            indicator_codes=indicator_list,
-            year=year
-        )
+        # Fetch each indicator separately and merge results
+        merged_data = []
+        for indicator in indicator_list:
+            data = await fetch_world_bank_data(
+                country_code=country_code,
+                indicator_codes=[indicator],
+                year=year
+            )
+            if data and data.get("indicators"):
+                merged_data.extend(data["indicators"])
         
-        if not data:
+        if not merged_data:
             raise HTTPException(status_code=404, detail="No data found")
         
-        return data
+        return {
+            "country_code": country_code,
+            "indicators": merged_data,
+            "year": year
+        }
         
     except HTTPException:
         raise

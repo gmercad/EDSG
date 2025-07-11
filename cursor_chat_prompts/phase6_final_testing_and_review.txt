@@ -1,3 +1,10 @@
 ### Phase 6: Final Testing & Review
-13. **End-to-end test of full workflow**
-14. **Document everything**
+
+**Status: Not Yet Completed**
+
+13. **End-to-end test of full workflow** ⬜
+    - Full workflow testing is planned and will be completed after all integration steps.
+14. **Document everything** ⬜
+    - Final documentation and review are pending and will be completed after end-to-end testing.
+
+Final testing and documentation are still to be completed in this phase.
