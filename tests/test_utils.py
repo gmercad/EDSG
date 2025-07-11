@@ -89,8 +89,7 @@ class TestDataProcessing:
         """Test processing invalid World Bank data structure"""
         raw_data = [{"invalid": "structure"}]
         result = process_world_bank_data(raw_data, "USA", ["NY.GDP.MKTP.CD"])
-        assert result is not None
-        assert result["country_name"] == "Unknown"
+        assert result is None
 
 class TestPromptGeneration:
     """Test prompt generation functions"""

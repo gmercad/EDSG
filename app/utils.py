@@ -13,8 +13,8 @@ import os
 from dotenv import load_dotenv
 
 # LLM imports
-from langchain.llms import OpenAI
-from langchain.chat_models import ChatOpenAI
+from langchain_community.llms import OpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 import openai
 
@@ -84,10 +84,12 @@ def process_world_bank_data(
     raw_data: List,
     country_code: str,
     indicator_codes: List[str]
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """
     Process raw World Bank API response into structured format
     """
+    if not raw_data or len(raw_data) < 2:
+        return None
     try:
         # Extract metadata and data
         metadata = raw_data[0] if raw_data else {}
