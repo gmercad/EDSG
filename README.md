@@ -17,7 +17,7 @@ A FastAPI-based application that generates comprehensive economic development sn
 
 - **Backend**: FastAPI (Python)
 - **Data Processing**: Pandas, NumPy
-- **LLM Integration**: OpenAI API, LM Studio (Mistral-7B-Instruct-v0.1)
+- **LLM Integration**: OpenAI API, LM Studio (Mistral-7B-Instruct-v0.1), Ollama
 - **Data Source**: World Bank Open Data API
 - **Testing**: Pytest
 - **Frontend**: HTML, CSS, JavaScript (Vanilla)
@@ -49,6 +49,7 @@ economic_development_snapshot_generator/
 - [Poetry](https://python-poetry.org/) (install with `pip install poetry`)
 - OpenAI API key (optional, for GPT analysis)
 - LM Studio (optional, for local Mistral-7B analysis)
+- Ollama (optional, for local LLM analysis)
 
 ### Installation
 
@@ -64,15 +65,13 @@ economic_development_snapshot_generator/
    ```
 
 3. **Set up environment variables**
-   ```cmd
-   copy env.example .env
-   ```
-   
-   Edit `.env` file and add your API keys:
-   ```
-   OPENAI_API_KEY=your_openai_api_key_here
-   LM_STUDIO_URL=http://localhost:1234/v1
-   ```
+   - Create a `.env` file in the project root. Example:
+     ```
+     OPENAI_API_KEY=your_openai_api_key_here
+     LM_STUDIO_URL=http://localhost:1234
+     OLLAMA_URL=http://localhost:11434
+     ```
+   - Replace the placeholder values with your actual API keys and URLs as needed.
 
 4. **Run the application**
    ```cmd
@@ -83,6 +82,43 @@ economic_development_snapshot_generator/
    - API Documentation: http://127.0.0.1:8000/docs
    - Web Dashboard: http://127.0.0.1:8000/
    - Health Check: http://127.0.0.1:8000/health
+
+## LLM Setup: OpenAI, LM Studio & Ollama
+
+You can use a local or cloud LLM backend for analysis. This project supports **OpenAI**, **LM Studio**, and **Ollama** as LLM providers.
+
+### OpenAI GPT
+1. Get an API key from [OpenAI](https://platform.openai.com/)
+2. Add to `.env`: `OPENAI_API_KEY=your_key_here`
+3. Use `"llm_provider": "openai"` in API requests
+
+### LM Studio (Mistral-7B)
+1. Download and install [LM Studio](https://lmstudio.ai/)
+2. Download a model (e.g., `mistral-7b-instruct-v0.1`)
+3. Start the LM Studio API server:
+   - Open LM Studio
+   - Go to the "API" tab and click "Enable API Server"
+   - Default server URL: `http://localhost:1234`
+4. Add to `.env`: `LM_STUDIO_URL=http://localhost:1234`
+5. Use `"llm_provider": "lm_studio"` in API requests and specify the model name (e.g., `mistral-7b-instruct-v0.1`)
+
+### Ollama
+1. Download and install [Ollama](https://ollama.com/download)
+2. Pull a model:
+   ```cmd
+   ollama pull mistral:latest
+   # or another supported model, e.g., llama2, codellama, etc.
+   ```
+3. Start the Ollama server (default: `http://localhost:11434`)
+4. Add to `.env`: `OLLAMA_URL=http://localhost:11434`
+5. Use `"llm_provider": "ollama"` in API requests and specify the model name (e.g., `mistral`)
+
+**Note:**
+- Make sure the model name you use matches exactly what is available in your LM Studio or Ollama instance.
+- You can check available models in LM Studio via the UI, and in Ollama with:
+  ```cmd
+  ollama list
+  ```
 
 ## API Endpoints
 
@@ -151,19 +187,6 @@ The application supports various World Bank economic indicators including:
 - **Trade**: Exports and imports as % of GDP
 - **Government**: Central government debt
 - **Social**: Literacy rate, Mortality rate
-
-## LLM Configuration
-
-### OpenAI GPT
-1. Get an API key from [OpenAI](https://platform.openai.com/)
-2. Add to `.env`: `OPENAI_API_KEY=your_key_here`
-3. Use `"llm_provider": "openai"` in API requests
-
-### LM Studio (Mistral-7B)
-1. Download and install [LM Studio](https://lmstudio.ai/)
-2. Load the Mistral-7B-Instruct-v0.1 model
-3. Start the local server (default: http://localhost:1234)
-4. Use `"llm_provider": "lm_studio"` in API requests
 
 ## Testing
 

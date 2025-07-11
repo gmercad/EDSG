@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os
 from dotenv import load_dotenv
-
+import sys
+print("Python executable:", sys.executable)
 # Load environment variables
 load_dotenv()
 
@@ -38,20 +39,24 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 # Import routes
-from app.routes import router as api_router
+from app.routes import router as api_router, register_routes
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
 
-@app.get("/")
-async def root():
-    """Root endpoint with basic project information"""
-    return {
-        "message": "Economic Development Snapshot Generator API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "status": "running"
-    }
+# Register dashboard.html route at root
+register_routes(app, templates)
+
+# Remove or comment out the old root endpoint to avoid conflict
+# @app.get("/")
+# async def root():
+#     """Root endpoint with basic project information"""
+#     return {
+#         "message": "Economic Development Snapshot Generator API",
+#         "version": "1.0.0",
+#         "docs": "/docs",
+#         "status": "running"
+#     }
 
 @app.get("/health")
 async def health_check():

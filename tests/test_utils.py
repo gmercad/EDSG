@@ -136,5 +136,34 @@ class TestAsyncFunctions:
         from app.utils import generate_snapshot_with_llm
         assert callable(generate_snapshot_with_llm)
 
+def test_resolve_env_vars_replaces_placeholders(monkeypatch):
+    import json
+    from app.utils import resolve_env_vars
+
+    # Set environment variables for test
+    monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "test_token")
+    monkeypatch.setenv("SUPABASE_PROJECT_REF", "test_project")
+
+    config = {
+        "mcpServers": {
+            "supabase": {
+                "args": [
+                    "--access-token",
+                    "${SUPABASE_ACCESS_TOKEN}",
+                    "--project-ref",
+                    "${SUPABASE_PROJECT_REF}"
+                ],
+                "env": {
+                    "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
+                }
+            }
+        }
+    }
+
+    resolved = resolve_env_vars(config)
+    assert resolved["mcpServers"]["supabase"]["args"][1] == "test_token"
+    assert resolved["mcpServers"]["supabase"]["args"][3] == "test_project"
+    assert resolved["mcpServers"]["supabase"]["env"]["SUPABASE_ACCESS_TOKEN"] == "test_token"
+
 if __name__ == "__main__":
     pytest.main([__file__]) 

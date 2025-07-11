@@ -6,12 +6,12 @@
         "-y",
         "@supabase/mcp-server-supabase@latest",
         "--access-token",
-        "sbp_20807f411eecb277367fd3f0c19276a9b9307020",
+        "${SUPABASE_ACCESS_TOKEN}",
         "--project-ref",
-        "YOUR_ACTUAL_PROJECT_ID_HERE"
+        "${SUPABASE_PROJECT_REF}"
       ],
       "env": {
-        "SUPABASE_ACCESS_TOKEN": "sbp_20807f411eecb277367fd3f0c19276a9b9307020"
+        "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
       }
     }
   }

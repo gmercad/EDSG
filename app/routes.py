@@ -2,8 +2,9 @@
 API routes for Economic Development Snapshot Generator
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Path
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Depends, Query, Path, FastAPI, Request
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import logging
@@ -35,6 +36,7 @@ class SnapshotResponse(BaseModel):
     snapshot_text: str
     generated_at: str
     metadata: Dict[str, Any]
+    llm_payload: Optional[Any] = None
 
 class ErrorResponse(BaseModel):
     error: str
@@ -116,7 +118,7 @@ async def generate_snapshot(request: SnapshotRequest):
         
         # Generate snapshot with LLM
         logger.info("Generating snapshot with LLM")
-        snapshot_text = await generate_snapshot_with_llm(
+        snapshot_text, llm_payload = await generate_snapshot_with_llm(
             country_code=request.country_code,
             data=world_bank_data,
             llm_provider=request.llm_provider
@@ -133,7 +135,8 @@ async def generate_snapshot(request: SnapshotRequest):
                 "llm_provider": request.llm_provider,
                 "year": request.year,
                 "indicator_count": len(request.indicator_codes)
-            }
+            },
+            llm_payload=llm_payload
         )
         
         return response
@@ -194,3 +197,8 @@ async def api_health_check():
     Health check for the API
     """
     return {"status": "healthy", "api": "economic-development-snapshot-generator"} 
+
+def register_routes(app: FastAPI, templates: Jinja2Templates):
+    @app.get("/", response_class=HTMLResponse)
+    async def home(request: Request):
+        return templates.TemplateResponse("dashboard.html", {"request": request, "message": None, "metadata": None}) 

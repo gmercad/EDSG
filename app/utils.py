@@ -11,18 +11,27 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import os
 from dotenv import load_dotenv
+import re
+import sys
+print("Python executable:", sys.executable)
 
 # LLM imports
-from langchain_community.llms import OpenAI
-from langchain_community.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
-import openai
+from langchain_openai import OpenAI, ChatOpenAI
+from app.config import settings
+
+# Validate config at import time
+try:
+    settings.validate()
+except Exception as e:
+    import logging
+    logging.error(f"LLM configuration error: {e}")
+    raise
 
 # Load environment variables
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # World Bank API configuration
@@ -30,8 +39,8 @@ WORLD_BANK_BASE_URL = "https://api.worldbank.org/v2"
 WORLD_BANK_FORMAT = "json"
 
 # LLM configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
 
 async def fetch_world_bank_data(
     country_code: str,
@@ -39,43 +48,38 @@ async def fetch_world_bank_data(
     year: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Fetch economic data from World Bank API
+    Fetch economic data from World Bank API with a timeout
     """
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=15)  # 15-second timeout
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             # Build the URL for the World Bank API
             indicators_str = ";".join(indicator_codes)
             url = f"{WORLD_BANK_BASE_URL}/country/{country_code}/indicator/{indicators_str}"
-            
             params = {
                 "format": WORLD_BANK_FORMAT,
-                "per_page": 1000  # Get more data
+                "per_page": 1000
             }
-            
             if year:
                 params["date"] = str(year)
             else:
-                # Get last 5 years of data
                 current_year = datetime.now().year
                 params["date"] = f"{current_year-5}:{current_year}"
-            
             logger.info(f"Fetching data from World Bank API: {url}")
-            
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    logger.error(f"World Bank API error: {response.status}")
-                    return None
-                
-                data = await response.json()
-                
-                if not data or len(data) < 2:
-                    logger.warning("No data returned from World Bank API")
-                    return None
-                
-                # Process the data
-                processed_data = process_world_bank_data(data, country_code, indicator_codes)
-                return processed_data
-                
+            try:
+                async with session.get(url, params=params) as response:
+                    if response.status != 200:
+                        logger.error(f"World Bank API error: {response.status}")
+                        return None
+                    data = await response.json()
+                    if not data or len(data) < 2:
+                        logger.warning("No data returned from World Bank API")
+                        return None
+                    processed_data = process_world_bank_data(data, country_code, indicator_codes)
+                    return processed_data
+            except asyncio.TimeoutError:
+                logger.error("World Bank API request timed out")
+                return None
     except Exception as e:
         logger.error(f"Error fetching World Bank data: {e}")
         return None
@@ -142,6 +146,7 @@ async def generate_snapshot_with_llm(
 ) -> str:
     """
     Generate economic development snapshot using LLM
+    Returns (text, payload_dict)
     """
     try:
         # Prepare the data for LLM
@@ -160,7 +165,7 @@ async def generate_snapshot_with_llm(
             
     except Exception as e:
         logger.error(f"Error generating snapshot with LLM: {e}")
-        return f"Error generating snapshot: {str(e)}"
+        return f"Error generating snapshot: {str(e)}", None
 
 def create_snapshot_prompt(country_name: str, indicators: List[Dict[str, Any]]) -> str:
     """
@@ -188,57 +193,80 @@ Economic Data for {country_name}:
     
     return prompt
 
-async def generate_with_openai(prompt: str) -> str:
+LLM_TIMEOUT = 300  # 5 minutes
+
+async def generate_with_openai(prompt: str):
     """
-    Generate text using OpenAI API
+    Generate text using OpenAI API via langchain_openai.OpenAI with a longer timeout.
+    Returns (text, payload_dict)
     """
-    if not OPENAI_API_KEY:
-        raise ValueError("OpenAI API key not found in environment variables")
-    
     try:
-        client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
-        
-        response = await client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are an expert economic analyst specializing in economic development analysis."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-        
+        if not settings.OPENAI_API_KEY:
+            raise ValueError("OpenAI API key not found in environment variables")
+        llm = OpenAI(openai_api_key=settings.OPENAI_API_KEY, model="gpt-3.5-turbo", temperature=0.7, max_tokens=1000)
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as pool:
+            try:
+                result = await asyncio.wait_for(loop.run_in_executor(pool, llm.invoke, prompt), timeout=LLM_TIMEOUT)
+                # Try to get the raw payload if available
+                payload = getattr(llm, 'last_response', None)
+                if payload is None:
+                    # Try to parse result as JSON if possible
+                    try:
+                        payload = json.loads(result)
+                    except Exception:
+                        payload = {"result": result}
+                return result, payload
+            except asyncio.TimeoutError:
+                logger.error("OpenAI API call timed out")
+                return "Error: LLM call timed out after 5 minutes.", None
     except Exception as e:
         logger.error(f"Error with OpenAI API: {e}")
-        raise
+        return f"Error generating snapshot: {str(e)}", None
 
-async def generate_with_lm_studio(prompt: str) -> str:
+async def generate_with_lm_studio(prompt: str):
+    print("DEBUG: generate_with_lm_studio called")
     """
-    Generate text using LM Studio (Mistral-7B-Instruct-v0.1)
+    Generate text using LM Studio (Mistral-7B-Instruct-v0.1) via langchain_openai.ChatOpenAI with a longer timeout.
+    Returns (text, payload_dict)
     """
     try:
-        client = openai.AsyncOpenAI(
-            api_key="not-needed",
-            base_url=LM_STUDIO_URL
+        logger.debug(f"LM Studio URL: {settings.LM_STUDIO_URL}")
+        logger.debug(f"LM Studio model: {settings.LM_STUDIO_MODEL}")
+        logger.debug(f"Prompt being sent to LM Studio: {prompt}")
+        llm = ChatOpenAI(
+            openai_api_key="not-needed",
+            base_url=settings.LM_STUDIO_URL,  # Should be http://localhost:1234/v1
+            model=settings.LM_STUDIO_MODEL,
+            temperature=0.7,
+            max_tokens=1000
         )
-        
-        response = await client.chat.completions.create(
-            model="local-model",
-            messages=[
-                {"role": "system", "content": "You are an expert economic analyst specializing in economic development analysis."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-        
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as pool:
+            try:
+                logger.debug("Invoking LM Studio LLM via ChatOpenAI...")
+                result = await asyncio.wait_for(loop.run_in_executor(pool, llm.invoke, prompt), timeout=LLM_TIMEOUT)
+                logger.debug(f"LM Studio LLM result: {result}")
+                payload = getattr(llm, 'last_response', None)
+                if payload is None:
+                    try:
+                        payload = json.loads(result)
+                    except Exception:
+                        payload = {"result": result}
+                return result, payload
+            except asyncio.TimeoutError as te:
+                logger.error("LM Studio LLM call timed out")
+                return f"Error: LLM call timed out after 5 minutes.", None
+            except Exception as e:
+                logger.error(f"LM Studio LLM call failed: {e}")
+                return f"Error: LLM call failed: {str(e)}", None
     except Exception as e:
         logger.error(f"Error with LM Studio: {e}")
-        raise
+        return f"Error generating snapshot: {str(e)}", None
 
 def validate_country_code(country_code: str) -> bool:
     """
@@ -309,3 +337,22 @@ async def test_llm_connection(llm_provider: str = "openai") -> bool:
     except Exception as e:
         logger.error(f"Error testing LLM connection: {e}")
         return False 
+
+def resolve_env_vars(value):
+    if isinstance(value, str):
+        # Replace ${VAR} with the value from the environment
+        return re.sub(r"\$\{(\w+)\}", lambda m: os.getenv(m.group(1), ""), value)
+    elif isinstance(value, dict):
+        return {k: resolve_env_vars(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [resolve_env_vars(v) for v in value]
+    else:
+        return value 
+
+# Simple test for LLM config and runtime errors
+def test_llm_config():
+    try:
+        settings.validate()
+        print("LLM config validated successfully.")
+    except Exception as e:
+        print(f"LLM config error: {e}") 
