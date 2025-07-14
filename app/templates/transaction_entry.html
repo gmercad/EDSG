@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>New Transaction Entry</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="top-right">
+        {% if username %}
+            <span>Logged in as {{ username }}</span>
+        {% else %}
+            <a href="/data-quality/dashboard"><button type="button">Service Role Login</button></a>
+        {% endif %}
+    </div>
+    <h1>Enter a New Transaction</h1>
+    <form action="/transactions/new" method="post">
+        <label for="customer_id">Customer:</label>
+        <select id="customer_id" name="customer_id" required>
+            <option value="">Select a customer</option>
+            {% for customer in customers %}
+                <option value="{{ customer.customer_id }}" {% if request.query_params.get('customer_id') == customer.customer_id|string %}selected{% endif %}>{{ customer.first_name }} {{ customer.last_name }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="store_id">Store:</label>
+        <select id="store_id" name="store_id" required>
+            <option value="">Select a store</option>
+            {% for store in stores %}
+                <option value="{{ store.store_id }}" {% if request.query_params.get('store_id') == store.store_id|string %}selected{% endif %}>{{ store.name }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="amount">Amount (USD):</label>
+        <input type="number" id="amount" name="amount" min="0.01" step="0.01" required value="{{ request.query_params.get('amount', '') }}">
+
+        <label for="timestamp">Timestamp:</label>
+        <input type="datetime-local" id="timestamp" name="timestamp" required value="{{ request.query_params.get('timestamp', '') }}">
+
+        {% if request.query_params.get('show_duplicate_options') %}
+            <div class="alert error" style="margin-bottom: 1rem;">
+                {{ result }}
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label><input type="radio" name="duplicate_action" value="block" required> Block Duplicate</label>
+                <label><input type="radio" name="duplicate_action" value="allow" required> Allow Duplicate</label>
+                <label><input type="radio" name="duplicate_action" value="prompt" required> Show Duplicates</label>
+            </div>
+        {% endif %}
+
+        <button type="submit">Submit Transaction</button>
+    </form>
+    {% if result and not request.query_params.get('show_duplicate_options') %}
+        <div id="result">{{ result }}</div>
+    {% endif %}
+</body>
+</html> 

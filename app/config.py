@@ -1,18 +1,17 @@
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
 import os
 
-model_config = ConfigDict(
-    env_file=".env",
-    env_file_encoding="utf-8",
-    extra="allow"
-)
+from pydantic import ConfigDict
+from pydantic_settings import BaseSettings
+
+model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="allow")
+
 
 class Settings(BaseSettings):
     """
     Centralized configuration for LLMs and environment variables.
     Loads from .env and validates required fields.
     """
+
     # OpenAI
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
@@ -43,6 +42,7 @@ class Settings(BaseSettings):
         if errors:
             raise ValueError("\n".join(errors))
 
+
 settings = Settings()
 
 """
@@ -51,4 +51,4 @@ How to update LM Studio configuration:
     LM_STUDIO_MODEL=mistral-7b-instruct-v0.1:2
 - The local server address should be set as:
     LM_STUDIO_URL=http://127.0.0.1:1234/v1
-""" 
+"""

@@ -1,1 +1,1 @@
-# Tests package for Economic Development Snapshot Generator 
+# Tests package for Economic Development Snapshot Generator

@@ -1,3 +1,8 @@
+# NOTE: This file is for reference only. Please use pyproject.toml and Poetry for all dependency management.
+# To install dependencies, run: poetry install
+# The versions here may not be up to date with pyproject.toml.
+#
+# See pyproject.toml for the authoritative list of dependencies.
 # FastAPI and web framework dependencies
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
