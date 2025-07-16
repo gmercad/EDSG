@@ -12,15 +12,16 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-import pandas as pd
+import httpx
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI, OpenAI
+
+from app.config import settings
 
 print("Python executable:", sys.executable)
 
 # LLM imports
-from langchain_openai import ChatOpenAI, OpenAI
 
-from app.config import settings
 
 # Validate config at import time
 try:
@@ -43,6 +44,7 @@ WORLD_BANK_BASE_URL = "https://api.worldbank.org/v2"
 WORLD_BANK_FORMAT = "json"
 
 # LLM configuration
+LM_STUDIO_CHAT_COMPLETIONS_URL = "http://localhost:1234/v1/chat/completions"
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
 
@@ -265,14 +267,12 @@ async def generate_with_openai(prompt: str):
 
 async def generate_with_lm_studio(prompt: str):
     print("DEBUG: generate_with_lm_studio called")
-    """
-    Generate text using LM Studio (Mistral-7B-Instruct-v0.1) via langchain_openai.ChatOpenAI with a longer timeout.
-    Returns (text, payload_dict)
-    """
+    logger.debug(f"LM Studio URL: {settings.LM_STUDIO_URL}")
+    logger.debug(f"LM Studio model: {settings.LM_STUDIO_MODEL}")
+    logger.debug(f"Prompt being sent to LM Studio: {prompt}")
+    print(f"DEBUG: LM_STUDIO_URL={settings.LM_STUDIO_URL}, LM_STUDIO_MODEL={settings.LM_STUDIO_MODEL}")
+    print(f"DEBUG: About to invoke LM Studio with prompt: {prompt}")
     try:
-        logger.debug(f"LM Studio URL: {settings.LM_STUDIO_URL}")
-        logger.debug(f"LM Studio model: {settings.LM_STUDIO_MODEL}")
-        logger.debug(f"Prompt being sent to LM Studio: {prompt}")
         llm = ChatOpenAI(
             openai_api_key="not-needed",
             base_url=settings.LM_STUDIO_URL,  # Should be http://localhost:1234/v1
@@ -287,9 +287,11 @@ async def generate_with_lm_studio(prompt: str):
         with ThreadPoolExecutor() as pool:
             try:
                 logger.debug("Invoking LM Studio LLM via ChatOpenAI...")
+                print("DEBUG: Invoking LM Studio LLM via ChatOpenAI...")
                 result = await asyncio.wait_for(
                     loop.run_in_executor(pool, llm.invoke, prompt), timeout=LLM_TIMEOUT
                 )
+                print(f"DEBUG: LM Studio LLM result: {result}")
                 logger.debug(f"LM Studio LLM result: {result}")
                 payload = getattr(llm, "last_response", None)
                 if payload is None:
@@ -298,15 +300,57 @@ async def generate_with_lm_studio(prompt: str):
                     except Exception:
                         payload = {"result": result}
                 return result, payload
-            except asyncio.TimeoutError as te:
+            except asyncio.TimeoutError:
                 logger.error("LM Studio LLM call timed out")
-                return f"Error: LLM call timed out after 5 minutes.", None
+                print("DEBUG: LM Studio LLM call timed out")
+                return "Error: LLM call timed out after 5 minutes.", None
             except Exception as e:
                 logger.error(f"LM Studio LLM call failed: {e}")
+                print(f"DEBUG: LM Studio LLM call failed: {e}")
                 return f"Error: LLM call failed: {str(e)}", None
     except Exception as e:
         logger.error(f"Error with LM Studio: {e}")
+        print(f"DEBUG: Error with LM Studio: {e}")
         return f"Error generating snapshot: {str(e)}", None
+
+
+async def call_llm(prompt: str, user_question: str) -> str:
+    """
+    Calls the Mistral LLM (via LM Studio) with the given prompt and user question.
+    """
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "model": "mistral-7b-instruct-v0.1",
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": user_question},
+        ],
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                LM_STUDIO_CHAT_COMPLETIONS_URL, json=payload, headers=headers, timeout=LLM_TIMEOUT
+            )
+            resp.raise_for_status()
+            data = resp.json()  # Synchronous call
+            if "choices" not in data:
+                import logging
+                logging.error(f"LM Studio response missing 'choices': {data}")
+                return f"Error communicating with LLM: {data}"
+            return data["choices"][0]["message"]["content"]
+    except httpx.RequestError as e:
+        import logging
+        logging.error(f"Network error communicating with LLM: {e}")
+        return f"Network error communicating with LLM: {str(e)}"
+    except httpx.HTTPStatusError as e:
+        import logging
+        logging.error(f"HTTP error from LLM: {e.response.status_code} {e.response.text}")
+        return f"HTTP error from LLM: {e.response.status_code} {e.response.text}"
+    except Exception as e:
+        import logging
+        logging.error(f"Unexpected error in call_llm: {e}")
+        return f"Unexpected error communicating with LLM: {str(e)}"
 
 
 def validate_country_code(country_code: str) -> bool:
@@ -402,3 +446,51 @@ def test_llm_config():
         print("LLM config validated successfully.")
     except Exception as e:
         print(f"LLM config error: {e}")
+
+
+# If there is another call_llm function above, rename this to call_llm_chatbot to avoid type conflicts.
+async def call_llm_chatbot(prompt: str, user_question: str) -> str:
+    """
+    Placeholder for LLM call for chatbot follow-up. Replace with actual LLM integration (OpenAI, LM Studio, etc).
+    Returns a dummy answer for now.
+    """
+    # In production, call your LLM API here
+    return f"[LLM Answer to: '{user_question}' using context: '{prompt[:60]}...']"
+
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler()],
+    )
+
+
+setup_logging()
+
+
+async def filter_with_guardrails(text: str) -> tuple:
+    """
+    Uses guardrails.ai to check for toxicity, PII, and risky business info.
+    Returns (is_flagged: bool, category: str or None)
+    """
+    try:
+        import guardrails as gr
+        from guardrails.hub import PII, BusinessSensitive, Toxicity
+
+        # Use the same Mistral LLM in LM Studio
+        lm_studio_url = os.getenv("LM_STUDIO_URL", "http://127.0.0.1:1234/v1/chat")
+        llm = gr.LM("mistral-7b-instruct-v0.1", api_base=lm_studio_url)
+        # Compose guardrails
+        checks = [Toxicity(), PII(), BusinessSensitive()]
+        flagged = []
+        for check in checks:
+            result = check(text, llm=llm)
+            if result and result["triggered"]:
+                flagged.append(check.__class__.__name__)
+        if flagged:
+            return True, flagged[0]  # Return first category found
+        return False, None
+    except Exception as e:
+        logging.error(f"Guardrails filter error: {e}")
+        return False, None

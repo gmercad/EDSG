@@ -2,10 +2,17 @@
 Unit tests for utility functions
 """
 
-import pytest
+from unittest.mock import patch
 
-from app.utils import (create_snapshot_prompt, process_world_bank_data,
-                       validate_country_code, validate_indicator_code)
+import pytest
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+from app.utils import (call_llm, create_snapshot_prompt,
+                       process_world_bank_data, validate_country_code,
+                       validate_indicator_code)
 
 
 class TestValidationFunctions:
@@ -15,13 +22,13 @@ class TestValidationFunctions:
         """Test valid country codes"""
         valid_codes = ["USA", "CHN", "DEU", "JPN", "GBR"]
         for code in valid_codes:
-            assert validate_country_code(code) == True
+            assert validate_country_code(code)
 
     def test_validate_country_code_invalid(self):
         """Test invalid country codes"""
         invalid_codes = ["", "US", "us", "USA1", "123", None]
         for code in invalid_codes:
-            assert validate_country_code(code) == False
+            assert not validate_country_code(code)
 
     def test_validate_indicator_code_valid(self):
         """Test valid indicator codes"""
@@ -32,13 +39,13 @@ class TestValidationFunctions:
             "SL.UEM.TOTL.ZS",
         ]
         for code in valid_codes:
-            assert validate_indicator_code(code) == True
+            assert validate_indicator_code(code)
 
     def test_validate_indicator_code_invalid(self):
         """Test invalid indicator codes"""
         invalid_codes = ["", "GDP", "NY-GDP-MKTP-CD", "NY.GDP.MKTP.CD!", None]
         for code in invalid_codes:
-            assert validate_indicator_code(code) == False
+            assert not validate_indicator_code(code)
 
 
 class TestDataProcessing:
@@ -137,8 +144,6 @@ class TestAsyncFunctions:
 
 
 def test_resolve_env_vars_replaces_placeholders(monkeypatch):
-    import json
-
     from app.utils import resolve_env_vars
 
     # Set environment variables for test
@@ -166,6 +171,55 @@ def test_resolve_env_vars_replaces_placeholders(monkeypatch):
         resolved["mcpServers"]["supabase"]["env"]["SUPABASE_ACCESS_TOKEN"]
         == "test_token"
     )
+
+
+@pytest.mark.asyncio
+async def test_call_llm_success():
+    mock_response = {"choices": [{"message": {"content": "This is a test answer."}}]}
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return mock_response
+
+        def raise_for_status(self):
+            pass
+
+    async def mock_post(*args, **kwargs):
+        return MockResp()
+
+    with patch("httpx.AsyncClient.post", new=mock_post):
+        answer = await call_llm("prompt", "question")
+        assert answer == "This is a test answer."
+
+
+@pytest.mark.asyncio
+async def test_call_llm_error():
+    async def mock_post(*args, **kwargs):
+        raise Exception("LLM error!")
+
+    with patch("httpx.AsyncClient.post", new=mock_post):
+        answer = await call_llm("prompt", "question")
+        assert answer.startswith("Error communicating with LLM:")
+
+
+def test_chat_followup_missing_snapshot_key():
+    response = client.post("/api/v1/chat-followup", json={"snapshot_key": "", "user_question": "What is the GDP?"})
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert "snapshot_text" in response.json()["error"] or "Missing" in response.json()["error"]
+
+def test_chat_followup_missing_user_question():
+    # First, generate a snapshot to get a valid key
+    resp = client.post("/api/v1/generate-snapshot", json={"country_code": "USA", "indicator_codes": ["NY.GDP.MKTP.CD"]})
+    assert resp.status_code == 200
+    snapshot_key = resp.json()["metadata"]["snapshot_key"]
+    # Now, call chat-followup with missing user_question
+    response = client.post("/api/v1/chat-followup", json={"snapshot_key": snapshot_key, "user_question": ""})
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert "user_question" in response.json()["error"] or "Missing" in response.json()["error"]
 
 
 if __name__ == "__main__":

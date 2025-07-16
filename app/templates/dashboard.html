@@ -180,60 +180,97 @@
         <div class="content">
             <div class="form-section">
                 <h2>Generate Economic Snapshot</h2>
-                <form id="snapshotForm">
+                <form id="snapshotForm" method="post" action="/api/v1/dashboard">
                     <div class="form-group">
-                        <label for="country">Country:</label>
-                        <select id="country" name="country" required>
+                        <label for="country_code">Country:</label>
+                        <select id="country_code" name="country_code" required>
                             <option value="">Select a country...</option>
-                            <option value="USA">United States</option>
-                            <option value="CHN">China</option>
-                            <option value="DEU">Germany</option>
-                            <option value="JPN">Japan</option>
-                            <option value="GBR">United Kingdom</option>
-                            <option value="IND">India</option>
-                            <option value="BRA">Brazil</option>
-                            <option value="FRA">France</option>
-                            <option value="ITA">Italy</option>
-                            <option value="CAN">Canada</option>
+                            <option value="USA" {% if country_code == "USA" %}selected{% endif %}>United States</option>
+                            <option value="CHN" {% if country_code == "CHN" %}selected{% endif %}>China</option>
+                            <option value="DEU" {% if country_code == "DEU" %}selected{% endif %}>Germany</option>
+                            <option value="JPN" {% if country_code == "JPN" %}selected{% endif %}>Japan</option>
+                            <option value="GBR" {% if country_code == "GBR" %}selected{% endif %}>United Kingdom</option>
+                            <option value="IND" {% if country_code == "IND" %}selected{% endif %}>India</option>
+                            <option value="BRA" {% if country_code == "BRA" %}selected{% endif %}>Brazil</option>
+                            <option value="FRA" {% if country_code == "FRA" %}selected{% endif %}>France</option>
+                            <option value="ITA" {% if country_code == "ITA" %}selected{% endif %}>Italy</option>
+                            <option value="CAN" {% if country_code == "CAN" %}selected{% endif %}>Canada</option>
                         </select>
                     </div>
                     
                     <div class="form-group">
                         <label for="indicators">Economic Indicators:</label>
-                        <select id="indicators" name="indicators" multiple required>
-                            <option value="NY.GDP.MKTP.CD">GDP (current US$)</option>
-                            <option value="NY.GDP.MKTP.KD.ZG">GDP growth (annual %)</option>
-                            <option value="NY.GDP.PCAP.CD">GDP per capita (current US$)</option>
-                            <option value="FP.CPI.TOTL.ZG">Inflation, consumer prices (annual %)</option>
-                            <option value="SL.UEM.TOTL.ZS">Unemployment, total (% of total labor force)</option>
-                            <option value="NE.EXP.GNFS.ZS">Exports of goods and services (% of GDP)</option>
-                            <option value="NE.IMP.GNFS.ZS">Imports of goods and services (% of GDP)</option>
-                            <option value="GC.DOD.TOTL.GD.ZS">Central government debt, total (% of GDP)</option>
-                            <option value="SE.ADT.LITR.ZS">Literacy rate, adult total (% of people ages 15 and above)</option>
-                            <option value="SH.DYN.MORT">Under-5 mortality rate, per 1,000 live births</option>
+                        <select id="indicators" name="indicator_codes" required>
+                            <option value="NY.GDP.MKTP.CD" {% if 'NY.GDP.MKTP.CD' in indicator_codes %}selected{% endif %}>GDP (current US$)</option>
+                            <option value="NY.GDP.MKTP.KD.ZG" {% if 'NY.GDP.MKTP.KD.ZG' in indicator_codes %}selected{% endif %}>GDP growth (annual %)</option>
+                            <option value="NY.GDP.PCAP.CD" {% if 'NY.GDP.PCAP.CD' in indicator_codes %}selected{% endif %}>GDP per capita (current US$)</option>
+                            <option value="FP.CPI.TOTL.ZG" {% if 'FP.CPI.TOTL.ZG' in indicator_codes %}selected{% endif %}>Inflation, consumer prices (annual %)</option>
+                            <option value="SL.UEM.TOTL.ZS" {% if 'SL.UEM.TOTL.ZS' in indicator_codes %}selected{% endif %}>Unemployment, total (% of total labor force)</option>
+                            <option value="NE.EXP.GNFS.ZS" {% if 'NE.EXP.GNFS.ZS' in indicator_codes %}selected{% endif %}>Exports of goods and services (% of GDP)</option>
+                            <option value="NE.IMP.GNFS.ZS" {% if 'NE.IMP.GNFS.ZS' in indicator_codes %}selected{% endif %}>Imports of goods and services (% of GDP)</option>
+                            <option value="GC.DOD.TOTL.GD.ZS" {% if 'GC.DOD.TOTL.GD.ZS' in indicator_codes %}selected{% endif %}>Central government debt, total (% of GDP)</option>
+                            <option value="SE.ADT.LITR.ZS" {% if 'SE.ADT.LITR.ZS' in indicator_codes %}selected{% endif %}>Literacy rate, adult total (% of people ages 15 and above)</option>
+                            <option value="SH.DYN.MORT" {% if 'SH.DYN.MORT' in indicator_codes %}selected{% endif %}>Under-5 mortality rate, per 1,000 live births</option>
                         </select>
                     </div>
                     
                     <div class="form-group">
                         <label for="year">Year (optional):</label>
-                        <input type="number" id="year" name="year" min="1960" max="2024" placeholder="Leave blank for last 5 years">
+                        <input type="number" id="year" name="year" min="1960" max="2024" placeholder="Leave blank for last 5 years" value="{{ year or '' }}">
                     </div>
                     
                     <div class="form-group">
                         <label for="llmProvider">LLM Provider:</label>
-                        <select id="llmProvider" name="llmProvider">
-                            <option value="openai">OpenAI GPT</option>
-                            <option value="lm_studio">LM Studio (Mistral-7B)</option>
+                        <select id="llmProvider" name="llm_provider">
+                            <option value="openai" {% if llm_provider == "openai" %}selected{% endif %}>OpenAI GPT</option>
+                            <option value="lm_studio" {% if llm_provider != "openai" %}selected{% endif %}>LM Studio (Mistral-7B)</option>
                         </select>
                     </div>
                     
-                    <button type="submit" class="btn" id="generateBtn">Generate Snapshot</button>
+                    <button type="submit" class="btn" id="generateBtn" name="generate_snapshot">Generate Snapshot</button>
                 </form>
             </div>
             
-            <div class="result-section" id="resultSection">
+            <div class="result-section" id="resultSection" {% if snapshot_text or chat_history %}style="display:block;"{% else %}style="display:none;"{% endif %}>
                 <h3>Economic Development Snapshot</h3>
-                <div id="snapshotContent"></div>
+                <div id="snapshotContent">
+                    {% if snapshot_text %}
+                    <div class="success">
+                        <strong>Generated for:</strong> {{ country_code }}
+                    </div>
+                    <div class="snapshot-text">
+                        {{ snapshot_text | replace('\n', '<br>') | safe }}
+                    </div>
+                    {% endif %}
+                </div>
+                <!-- Chat follow-up form -->
+                <hr>
+                <h4>Ask a follow-up question about this summary</h4>
+                {% if error_message %}
+                <div class="error">{{ error_message }}</div>
+                {% endif %}
+                <form id="followupForm" method="post" action="/api/v1/chat-followup">
+                    <input type="hidden" name="snapshot_key" value="{{ snapshot_key }}">
+                    <input type="hidden" name="chat_key" value="{{ chat_key }}">
+                    <input type="text" name="user_question" value="{{ user_question or '' }}" style="width: 60%;" {% if not snapshot_key %}disabled{% endif %}>
+                    <button type="submit" {% if not snapshot_key %}disabled{% endif %}>Ask</button>
+                </form>
+                <div id="chatAnswer" style="margin-top: 1em; color: #1a73e8;">
+                    {% if chat_answer %}{{ chat_answer }}{% endif %}
+                </div>
+                {% if chat_history and chat_history|length > 0 %}
+                <div style="margin-top: 2em;">
+                    <h5>Chat History</h5>
+                    <ul style="list-style: none; padding-left: 0;">
+                        {% for turn in chat_history %}
+                        <li style="margin-bottom: 1em;">
+                            <strong>You:</strong> {{ turn.question }}<br>
+                            <strong>Assistant:</strong> {{ turn.answer }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
             </div>
             
             <div class="loading" id="loading" style="display: none;">
@@ -243,76 +280,131 @@
     </div>
 
     <script>
-        document.getElementById('snapshotForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(e.target);
-            const country = formData.get('country');
-            const indicators = Array.from(document.getElementById('indicators').selectedOptions).map(opt => opt.value);
-            const year = formData.get('year') || null;
-            const llmProvider = formData.get('llmProvider');
-            
-            if (indicators.length === 0) {
-                alert('Please select at least one economic indicator.');
-                return;
+        // Remove the JavaScript that handles snapshot generation via fetch and related DOM updates
+        function validateChatForm() {
+            var key = document.querySelector('input[name="snapshot_key"]').value;
+            if (!key) {
+                alert('Please generate a snapshot before asking follow-up questions.');
+                return false;
             }
-            
-            // Show loading
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('resultSection').style.display = 'none';
-            document.getElementById('generateBtn').disabled = true;
-            
-            try {
-                const response = await fetch('/api/v1/generate-snapshot', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        country_code: country,
-                        indicator_codes: indicators,
-                        year: year ? parseInt(year) : null,
-                        llm_provider: llmProvider
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    document.getElementById('snapshotContent').innerHTML = `
-                        <div class="success">
-                            <strong>Generated for:</strong> ${result.country_name} (${result.country_code})
-                        </div>
-                        <div class="snapshot-text">
-                            ${result.snapshot_text.replace(/\n/g, '<br>')}
-                        </div>
-                        <div style="margin-top: 20px; font-size: 0.9em; color: #666;">
-                            Generated at: ${new Date(result.generated_at).toLocaleString()}<br>
-                            LLM Provider: ${result.metadata.llm_provider}<br>
-                            Indicators analyzed: ${result.metadata.indicator_count}
-                        </div>
-                    `;
-                    document.getElementById('resultSection').style.display = 'block';
-                } else {
-                    document.getElementById('snapshotContent').innerHTML = `
-                        <div class="error">
-                            <strong>Error:</strong> ${result.detail || 'Failed to generate snapshot'}
-                        </div>
-                    `;
-                    document.getElementById('resultSection').style.display = 'block';
-                }
-            } catch (error) {
-                document.getElementById('snapshotContent').innerHTML = `
-                    <div class="error">
-                        <strong>Error:</strong> ${error.message}
-                    </div>
-                `;
-                document.getElementById('resultSection').style.display = 'block';
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('generateBtn').disabled = false;
-            }
-        });
+            return true;
+        }
     </script>
+    <script>
+// AJAX for snapshot form
+const snapshotForm = document.getElementById('snapshotForm');
+snapshotForm.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('resultSection').style.display = 'none';
+    const formData = new FormData(snapshotForm);
+    // Convert FormData to JSON
+    const data = {};
+    formData.forEach((value, key) => {
+        data[key] = value;
+    });
+    data['generate_snapshot'] = true;
+    const response = await fetch('/api/v1/dashboard', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+        body: new URLSearchParams(data)
+    });
+    document.getElementById('loading').style.display = 'none';
+    if (response.ok) {
+        const html = await response.text();
+        // Replace the content of the result section
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newResult = doc.getElementById('resultSection');
+        if (newResult) {
+            document.getElementById('resultSection').innerHTML = newResult.innerHTML;
+            document.getElementById('resultSection').style.display = 'block';
+            // --- PATCH: update follow-up form hidden fields and re-attach event listener ---
+            const newSnapshotKeyInput = document.querySelector('input[name="snapshot_key"]');
+            const newChatKeyInput = document.querySelector('input[name="chat_key"]');
+            // Try to extract new values from the DOM (if present)
+            if (newSnapshotKeyInput && data.metadata && data.metadata.snapshot_key) {
+                newSnapshotKeyInput.value = data.metadata.snapshot_key;
+            }
+            if (newChatKeyInput && data.metadata && data.metadata.chat_key) {
+                newChatKeyInput.value = data.metadata.chat_key;
+            }
+            // Re-attach follow-up form event listener
+            const followupForm = document.getElementById('followupForm');
+            if (followupForm) {
+                followupForm.addEventListener('submit', async function(e) {
+                    e.preventDefault();
+                    const snapshotKey = followupForm.querySelector('input[name="snapshot_key"]')?.value || '';
+                    const userQuestion = followupForm.querySelector('input[name="user_question"]')?.value || '';
+                    const chatKey = followupForm.querySelector('input[name="chat_key"]')?.value || null;
+                    console.log('snapshotKey:', snapshotKey);
+                    console.log('userQuestion:', userQuestion);
+                    console.log('chatKey:', chatKey);
+                    console.log({
+                        snapshot_key: snapshotKey,
+                        user_question: userQuestion,
+                        prev_chat_key: chatKey
+                    });
+                    const response = await fetch('/api/v1/chat-followup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            snapshot_key: snapshotKey,
+                            user_question: userQuestion,
+                            prev_chat_key: chatKey
+                        })
+                    });
+                    const chatAnswerDiv = document.getElementById('chatAnswer');
+                    if (response.ok) {
+                        const data = await response.json();
+                        chatAnswerDiv.innerText = data.answer || 'No answer returned.';
+                    } else {
+                        chatAnswerDiv.innerText = 'Error: Could not get a response.';
+                    }
+                });
+            }
+            // --- END PATCH ---
+        }
+    } else {
+        document.getElementById('resultSection').innerHTML = '<div class="error">Error generating snapshot. Please try again.</div>';
+        document.getElementById('resultSection').style.display = 'block';
+    }
+});
+
+// AJAX for follow-up chat form
+const followupForm = document.getElementById('followupForm');
+if (followupForm) {
+    followupForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const snapshotKey = followupForm.querySelector('input[name="snapshot_key"]')?.value || '';
+        const userQuestion = followupForm.querySelector('input[name="user_question"]')?.value || '';
+        const chatKey = followupForm.querySelector('input[name="chat_key"]')?.value || null;
+        console.log('snapshotKey:', snapshotKey);
+        console.log('userQuestion:', userQuestion);
+        console.log('chatKey:', chatKey);
+        console.log({
+            snapshot_key: snapshotKey,
+            user_question: userQuestion,
+            prev_chat_key: chatKey
+        });
+        const response = await fetch('/api/v1/chat-followup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                snapshot_key: snapshotKey,
+                user_question: userQuestion,
+                prev_chat_key: chatKey
+            })
+        });
+        const chatAnswerDiv = document.getElementById('chatAnswer');
+        if (response.ok) {
+            const data = await response.json();
+            chatAnswerDiv.innerText = data.answer || 'No answer returned.';
+        } else {
+            chatAnswerDiv.innerText = 'Error: Could not get a response.';
+        }
+    });
+}
+</script>
 </body>
 </html> 

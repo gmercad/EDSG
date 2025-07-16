@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
     # LM Studio
-    LM_STUDIO_URL: str = os.getenv("LM_STUDIO_URL", "http://127.0.0.1:1234/v1")
+    LM_STUDIO_URL: str = os.getenv("LM_STUDIO_URL", "http://127.0.0.1:1234/v1/chat")
     LM_STUDIO_MODEL: str = os.getenv("LM_STUDIO_MODEL", "mistral-7b-instruct-v0.1:2")
 
     # Ollama

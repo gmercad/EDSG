@@ -2,22 +2,34 @@
 API routes for Economic Development Snapshot Generator
 """
 
+import datetime
 import hashlib
+import json
 import logging
 import os
 import secrets
 from typing import Any, Dict, List, Optional
 
-from fastapi import (APIRouter, Body, Depends, FastAPI, HTTPException,
-                     Request, Form)
+import httpx
+from fastapi import (APIRouter, Body, Depends, FastAPI, Form, HTTPException,
+                     Request)
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from supabase import Client, create_client
+import uuid
 
-from app.utils import (fetch_world_bank_data, generate_snapshot_with_llm,
-                       validate_country_code, validate_indicator_code)
+# Redis async client
+import os
+import redis.asyncio as aioredis
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+
+from app.utils import (call_llm, fetch_world_bank_data, filter_with_guardrails,
+                       generate_snapshot_with_llm, validate_country_code,
+                       validate_indicator_code)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +45,7 @@ class SnapshotRequest(BaseModel):
     country_code: str = "USA"  # United States is valid for NY.GDP.MKTP.CD
     indicator_codes: List[str] = ["NY.GDP.MKTP.CD"]
     year: Optional[int] = 2021
-    llm_provider: str = "openai"  # "openai" or "lm_studio"
+    llm_provider: str = "lm_studio"  # Default to LM Studio
 
 
 class SnapshotResponse(BaseModel):
@@ -180,7 +192,14 @@ async def generate_snapshot(request: SnapshotRequest):
             return JSONResponse(
                 status_code=502, content={"error": "LLM Error", "detail": snapshot_text}
             )
-        # Prepare response
+        # After generating snapshot_text and llm_payload:
+        snapshot_key = str(uuid.uuid4())
+        try:
+            await redis_client.set(f"snapshot:{snapshot_key}", snapshot_text, ex=3600)  # 1 hour expiry
+        except Exception as e:
+            logger.error(f"Redis error: {e}")
+            return JSONResponse(status_code=500, content={"error": "Failed to store snapshot in Redis", "detail": str(e)})
+        # Add snapshot_key to response
         response = SnapshotResponse(
             country_code=request.country_code,
             country_name=world_bank_data.get("country_name", "Unknown"),
@@ -191,6 +210,7 @@ async def generate_snapshot(request: SnapshotRequest):
                 "llm_provider": request.llm_provider,
                 "year": request.year,
                 "indicator_count": len(request.indicator_codes),
+                "snapshot_key": snapshot_key,
             },
             llm_payload=llm_payload,
         )
@@ -455,8 +475,6 @@ async def data_quality_scan(request: Request, action: str = Body("report_only"))
         )
 
     # Min/max summaries for numeric/date columns
-    import datetime
-
     def get_min_max(values):
         if not values:
             return None, None
@@ -574,8 +592,6 @@ async def data_quality_scan(request: Request, action: str = Body("report_only"))
 
     # After findings/anomalies/user_prompt are prepared:
     # Log findings/anomalies to DataQualityLogs table in Supabase
-    import json
-
     try:
         supabase.table("DataQualityLogs").insert(
             {
@@ -682,6 +698,225 @@ async def data_quality_dashboard(
     return JSONResponse({"status": "success", "logs": logs})
 
 
+@router.post("/chat-followup")
+async def chat_followup(snapshot_key: str = Body(...), user_question: str = Body(...), prev_chat_key: str = Body(None)):
+    logger = logging.getLogger(__name__)
+    try:
+        snapshot_text = await redis_client.get(f"snapshot:{snapshot_key}")
+    except Exception as e:
+        logger.error(f"Redis error: {e}")
+        return JSONResponse({"error": "Failed to retrieve snapshot from Redis", "detail": str(e)}, status_code=500)
+    snapshot_hash = (
+        hashlib.sha256(snapshot_text.encode()).hexdigest() if snapshot_text else None
+    )
+    logger.info(
+        f"/chat-followup request: question='{user_question}', snapshot_hash={snapshot_hash}"
+    )
+    if not snapshot_text or not user_question:
+        logger.warning("Missing snapshot_text or user_question.")
+        return JSONResponse(
+            {"error": "Missing snapshot_text or user_question."}, status_code=400
+        )
+    # Compose context: if prev_chat_key is provided, fetch previous chat turns
+    chat_context = []
+    if prev_chat_key:
+        # Fetch all previous chat turns for this snapshot
+        idx = 0
+        while True:
+            chat_turn = await redis_client.get(f"chat:{snapshot_key}:{idx}")
+            if not chat_turn:
+                break
+            chat_context.append(json.loads(chat_turn))
+            idx += 1
+    # Compose prompt with snapshot and chat history
+    prompt = (
+        "You are a data assistant. The user has just received the following economic development snapshot:\n\n"
+        f"{snapshot_text}\n\n"
+        "When the user asks a follow-up question, answer using the information in the snapshot above as your primary source. "
+        "If the answer is not directly available, use your general knowledge, but always prioritize the snapshot data.\n\n"
+    )
+    if chat_context:
+        for turn in chat_context:
+            prompt += f"Previous Q: {turn['question']}\nA: {turn['answer']}\n"
+    # Guardrails filter temporarily disabled for debugging
+    # flagged, category = await filter_with_guardrails(prompt)
+    # if flagged:
+    #     logger.warning(
+    #         f"Prompt flagged by guardrails: category={category}, question='{user_question}', snapshot_hash={snapshot_hash}"
+    #     )
+    #     return JSONResponse(
+    #         {
+    #             "error": f"Your request was flagged for {category} and cannot be processed."
+    #         },
+    #         status_code=400,
+    #     )
+    try:
+        answer = await call_llm(prompt, user_question)
+        # Guardrails filter on LLM response temporarily disabled
+        # flagged_resp, category_resp = await filter_with_guardrails(answer)
+        # if flagged_resp:
+        #     logger.warning(
+        #         f"LLM response flagged by guardrails: category={category_resp}, question='{user_question}', snapshot_hash={snapshot_hash}"
+        #     )
+        #     return JSONResponse(
+        #         {
+        #             "error": f"The response was flagged for {category_resp} and cannot be shown."
+        #         },
+        #         status_code=400,
+        #     )
+        if isinstance(answer, str) and answer.lower().startswith("error"):
+            logger.error(f"LLM error: {answer}")
+            return JSONResponse({"error": answer}, status_code=502)
+        # Save this chat turn in Redis
+        # Find the next available index
+        idx = 0
+        while True:
+            exists = await redis_client.exists(f"chat:{snapshot_key}:{idx}")
+            if not exists:
+                break
+            idx += 1
+        chat_turn = {"question": user_question, "answer": answer}
+        await redis_client.set(f"chat:{snapshot_key}:{idx}", json.dumps(chat_turn), ex=3600)
+        chat_key = f"chat:{snapshot_key}:{idx}"
+        return {"answer": answer, "chat_key": chat_key, "turn_index": idx}
+    except Exception as e:
+        logger.error(f"Internal server error: {str(e)}")
+        return JSONResponse(
+            {"error": f"Internal server error: {str(e)}"}, status_code=500
+        )
+
+
+@router.api_route("/dashboard", methods=["GET", "POST"])
+async def dashboard(request: Request):
+    snapshot_text = ""
+    chat_answer = ""
+    user_question = ""
+    country_code = ""
+    indicator_codes = ""
+    year = ""
+    llm_provider = "lm_studio"
+    snapshot_key = ""
+    error_message = ""
+    chat_history = []
+    chat_key = None
+    if request.method == "POST":
+        form = await request.form()
+        if "generate_snapshot" in form:
+            country_code = form.get("country_code")
+            indicator_codes = form.get("indicator_codes")
+            error_message = ""
+            if not country_code or not indicator_codes:
+                error_message = "Country and indicator(s) are required. Please select both before generating a snapshot."
+                context = {
+                    "country_code": country_code,
+                    "indicator_codes": [],
+                    "year": form.get("year"),
+                    "llm_provider": form.get("llm_provider", "lm_studio"),
+                    "snapshot_key": "",
+                    "snapshot_text": "",
+                    "chat_history": [],
+                    "chat_key": None,
+                    "user_question": "",
+                    "chat_answer": "",
+                    "error_message": error_message,
+                }
+                return Jinja2Templates(directory="app/templates").TemplateResponse(
+                    "dashboard.html", {"request": request, **context}
+                )
+            if isinstance(indicator_codes, str):
+                indicator_codes_list = [s.strip() for s in indicator_codes.split(",") if s.strip()]
+            else:
+                indicator_codes_list = indicator_codes
+            year_str = form.get("year", "")
+            year = int(year_str) if year_str else None
+            llm_provider = form.get("llm_provider") or "lm_studio"
+            from app.routes import SnapshotRequest, generate_snapshot
+            snapshot_resp = await generate_snapshot(
+                SnapshotRequest(
+                    country_code=country_code,
+                    indicator_codes=indicator_codes_list,
+                    year=year,
+                    llm_provider=llm_provider,
+                )
+            )
+            if hasattr(snapshot_resp, "snapshot_text"):
+                snapshot_text = snapshot_resp.snapshot_text
+            elif isinstance(snapshot_resp, dict) and "snapshot_text" in snapshot_resp:
+                snapshot_text = snapshot_resp["snapshot_text"]
+            if hasattr(snapshot_resp, "metadata") and "snapshot_key" in snapshot_resp.metadata:
+                snapshot_key = snapshot_resp.metadata["snapshot_key"]
+            elif isinstance(snapshot_resp, dict) and "metadata" in snapshot_resp and "snapshot_key" in snapshot_resp["metadata"]:
+                snapshot_key = snapshot_resp["metadata"]["snapshot_key"]
+            chat_history = []
+            chat_key = None
+            # Set indicator_codes for template
+            indicator_codes = indicator_codes_list
+        elif "ask_question" in form:
+            snapshot_key = form.get("snapshot_key", "")
+            user_question = form.get("user_question", "")
+            chat_key = form.get("chat_key", None)
+            # Restore previous selections for template
+            country_code = form.get("country_code")
+            indicator_codes = form.get("indicator_codes")
+            if isinstance(indicator_codes, str):
+                indicator_codes_list = [s.strip() for s in indicator_codes.split(",") if s.strip()]
+            else:
+                indicator_codes_list = indicator_codes
+            year_str = form.get("year", "")
+            year = int(year_str) if year_str else None
+            llm_provider = form.get("llm_provider") or "lm_studio"
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "http://127.0.0.1:8000/api/v1/chat-followup",
+                    json={
+                        "snapshot_key": snapshot_key,
+                        "user_question": user_question,
+                        "prev_chat_key": chat_key,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    chat_answer = data.get("answer", "")
+                    chat_key = data.get("chat_key", None)
+                    chat_history = []
+                    idx = 0
+                    while True:
+                        chat_turn = await redis_client.get(f"chat:{snapshot_key}:{idx}")
+                        if not chat_turn:
+                            break
+                        chat_history.append(json.loads(chat_turn))
+                        idx += 1
+                else:
+                    error_message = resp.json().get("error", resp.text)
+                    chat_history = []
+                    idx = 0
+                    while True:
+                        chat_turn = await redis_client.get(f"chat:{snapshot_key}:{idx}")
+                        if not chat_turn:
+                            break
+                        chat_history.append(json.loads(chat_turn))
+                        idx += 1
+            indicator_codes = indicator_codes_list
+    else:
+        chat_history = []
+    context = {
+        "country_code": country_code,
+        "indicator_codes": indicator_codes_list,
+        "year": year,
+        "llm_provider": llm_provider,
+        "snapshot_key": snapshot_key,
+        "snapshot_text": snapshot_text,
+        "chat_history": chat_history,
+        "chat_key": chat_key,
+        "user_question": user_question,
+        "chat_answer": chat_answer,
+        "error_message": error_message,
+    }
+    return Jinja2Templates(directory="app/templates").TemplateResponse(
+        "dashboard.html", {"request": request, **context}
+    )
+
+
 def register_routes(app: FastAPI, templates: Jinja2Templates):
     @app.get("/", response_class=HTMLResponse)
     async def home(request: Request):
@@ -719,13 +954,22 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
         return HTMLResponse(content=html)
 
     @app.post("/login", response_class=HTMLResponse)
-    async def login_submit(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/transactions/entry")):
+    async def login_submit(
+        request: Request,
+        username: str = Form(...),
+        password: str = Form(...),
+        next: str = Form("/transactions/entry"),
+    ):
         SUPABASE_URL = os.getenv("SUPABASE_URL")
         SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            return HTMLResponse("<h2>Supabase URL or service_role key not set in environment variables.</h2>", status_code=500)
+            return HTMLResponse(
+                "<h2>Supabase URL or service_role key not set in environment variables.</h2>",
+                status_code=500,
+            )
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
         import hashlib
+
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         try:
             resp = (
@@ -736,9 +980,14 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
             )
             users = resp.data if hasattr(resp, "data") else resp
             if not users or users[0]["password_hash"] != password_hash:
-                return RedirectResponse(f"/login?error=Invalid+username+or+password.&next={next}", status_code=303)
+                return RedirectResponse(
+                    f"/login?error=Invalid+username+or+password.&next={next}",
+                    status_code=303,
+                )
         except Exception as e:
-            return RedirectResponse(f"/login?error=Auth+error:+{str(e)}&next={next}", status_code=303)
+            return RedirectResponse(
+                f"/login?error=Auth+error:+{str(e)}&next={next}", status_code=303
+            )
         # Set session
         request.session["username"] = username
         return RedirectResponse(next, status_code=303)
@@ -756,34 +1005,56 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
         SUPABASE_URL = os.getenv("SUPABASE_URL")
         SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            return HTMLResponse("<h2>Supabase URL or service_role key not set in environment variables.</h2>", status_code=500)
+            return HTMLResponse(
+                "<h2>Supabase URL or service_role key not set in environment variables.</h2>",
+                status_code=500,
+            )
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
         try:
-            customers_resp = supabase.table("Customers_test").select("customer_id, first_name, last_name").execute()
+            customers_resp = (
+                supabase.table("Customers_test")
+                .select("customer_id, first_name, last_name")
+                .execute()
+            )
             stores_resp = supabase.table("Stores").select("store_id, name").execute()
-            customers = customers_resp.data if hasattr(customers_resp, 'data') else customers_resp
-            stores = stores_resp.data if hasattr(stores_resp, 'data') else stores_resp
+            customers = (
+                customers_resp.data
+                if hasattr(customers_resp, "data")
+                else customers_resp
+            )
+            stores = stores_resp.data if hasattr(stores_resp, "data") else stores_resp
         except Exception as e:
-            return HTMLResponse(f"<h2>Error fetching customers or stores: {str(e)}</h2>", status_code=500)
+            return HTMLResponse(
+                f"<h2>Error fetching customers or stores: {str(e)}</h2>",
+                status_code=500,
+            )
         result = request.query_params.get("result")
         # Pre-fill fields if present
-        customer_id = request.query_params.get('customer_id', '')
-        store_id = request.query_params.get('store_id', '')
-        amount = request.query_params.get('amount', '')
-        timestamp = request.query_params.get('timestamp', '')
-        show_duplicate_options = request.query_params.get('show_duplicate_options')
+        customer_id = request.query_params.get("customer_id", "")
+        store_id = request.query_params.get("store_id", "")
+        amount = request.query_params.get("amount", "")
+        timestamp = request.query_params.get("timestamp", "")
+        show_duplicate_options = request.query_params.get("show_duplicate_options")
         # Build dropdowns
-        customer_options = "<option value=''>Select a customer</option>" + "".join([
-            f"<option value='{c['customer_id']}'{' selected' if str(customer_id)==str(c['customer_id']) else ''}>{c['first_name']} {c['last_name']}</option>" for c in customers
-        ])
-        store_options = "<option value=''>Select a store</option>" + "".join([
-            f"<option value='{s['store_id']}'{' selected' if str(store_id)==str(s['store_id']) else ''}>{s['name']}</option>" for s in stores
-        ])
+        customer_options = "<option value=''>Select a customer</option>" + "".join(
+            [
+                f"<option value='{c['customer_id']}'{' selected' if str(customer_id)==str(c['customer_id']) else ''}>{c['first_name']} {c['last_name']}</option>"
+                for c in customers
+            ]
+        )
+        store_options = "<option value=''>Select a store</option>" + "".join(
+            [
+                f"<option value='{s['store_id']}'{' selected' if str(store_id)==str(s['store_id']) else ''}>{s['name']}</option>"
+                for s in stores
+            ]
+        )
         # Top right button
         if username:
             top_right = f"<span>Logged in as {username}</span> <a href='/logout'><button type='button'>Logout</button></a>"
         else:
-            top_right = "<a href='/login'><button type='button'>Service Role Login</button></a>"
+            top_right = (
+                "<a href='/login'><button type='button'>Service Role Login</button></a>"
+            )
         # Duplicate radio buttons
         duplicate_html = ""
         if show_duplicate_options:
@@ -837,10 +1108,13 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
         SUPABASE_URL = os.getenv("SUPABASE_URL")
         SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            return JSONResponse({
-                "status": "error",
-                "message": "Supabase URL or service_role key not set in environment variables."
-            }, status_code=500)
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "message": "Supabase URL or service_role key not set in environment variables.",
+                },
+                status_code=500,
+            )
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
         form = await request.form()
@@ -861,28 +1135,43 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
                 is_form = False
                 action = data.get("duplicate_action")
             except Exception as e:
-                return JSONResponse({"status": "error", "message": f"Invalid input: {str(e)}"}, status_code=400)
+                return JSONResponse(
+                    {"status": "error", "message": f"Invalid input: {str(e)}"},
+                    status_code=400,
+                )
 
         if not customer_id or not store_id or amount is None or not timestamp:
             result_msg = "Missing required fields."
             if is_form:
-                url = request.url_for("transaction_entry_form") + f"?result={result_msg}"
+                url = (
+                    request.url_for("transaction_entry_form") + f"?result={result_msg}"
+                )
                 return RedirectResponse(url, status_code=303)
-            return JSONResponse({"status": "error", "message": result_msg}, status_code=400)
+            return JSONResponse(
+                {"status": "error", "message": result_msg}, status_code=400
+            )
         try:
             amount = float(amount)
         except Exception:
             result_msg = "Amount must be a number."
             if is_form:
-                url = request.url_for("transaction_entry_form") + f"?result={result_msg}"
+                url = (
+                    request.url_for("transaction_entry_form") + f"?result={result_msg}"
+                )
                 return RedirectResponse(url, status_code=303)
-            return JSONResponse({"status": "error", "message": result_msg}, status_code=400)
+            return JSONResponse(
+                {"status": "error", "message": result_msg}, status_code=400
+            )
         if amount <= 0:
             result_msg = "Amount must be greater than $0.00 USD."
             if is_form:
-                url = request.url_for("transaction_entry_form") + f"?result={result_msg}"
+                url = (
+                    request.url_for("transaction_entry_form") + f"?result={result_msg}"
+                )
                 return RedirectResponse(url, status_code=303)
-            return JSONResponse({"status": "error", "message": result_msg}, status_code=400)
+            return JSONResponse(
+                {"status": "error", "message": result_msg}, status_code=400
+            )
 
         # --- Deduplication logic ---
         duplicate_query = (
@@ -894,7 +1183,11 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
             .eq("timestamp", timestamp)
             .execute()
         )
-        duplicates = duplicate_query.data if hasattr(duplicate_query, 'data') else duplicate_query
+        duplicates = (
+            duplicate_query.data
+            if hasattr(duplicate_query, "data")
+            else duplicate_query
+        )
         if duplicates and not action:
             # Redirect back to form with message, pre-filled fields, and show radio buttons
             result_msg = (
@@ -909,40 +1202,58 @@ def register_routes(app: FastAPI, templates: Jinja2Templates):
                 store_id=store_id,
                 amount=amount,
                 timestamp=timestamp,
-                show_duplicate_options="1"
+                show_duplicate_options="1",
             )
             return RedirectResponse(str(url), status_code=303)
         elif duplicates and action == "block":
             result_msg = "Duplicate transaction blocked. No new record inserted."
-            url = request.url_for("transaction_entry_form").include_query_params(result=result_msg)
+            url = request.url_for("transaction_entry_form").include_query_params(
+                result=result_msg
+            )
             return RedirectResponse(str(url), status_code=303)
         elif duplicates and action == "prompt":
             # Show details of duplicates in plain text
-            details = "; ".join([
-                f"ID: {d['transaction_id']}, Customer: {d['customer_id']}, Store: {d['store_id']}, Amount: {d['amount']}, Timestamp: {d['timestamp']}"
-                for d in duplicates
-            ])
+            details = "; ".join(
+                [
+                    f"ID: {d['transaction_id']}, Customer: {d['customer_id']}, Store: {d['store_id']}, Amount: {d['amount']}, Timestamp: {d['timestamp']}"
+                    for d in duplicates
+                ]
+            )
             result_msg = f"Duplicate(s) found: {details}"
-            url = request.url_for("transaction_entry_form").include_query_params(result=result_msg)
+            url = request.url_for("transaction_entry_form").include_query_params(
+                result=result_msg
+            )
             return RedirectResponse(str(url), status_code=303)
         # If action == "allow" or no duplicates, proceed with insert
 
         try:
-            resp = supabase.table("Transactions").insert({
-                "customer_id": customer_id,
-                "store_id": store_id,
-                "amount": amount,
-                "timestamp": timestamp
-            }).execute()
-            if hasattr(resp, 'data') and resp.data:
+            resp = (
+                supabase.table("Transactions")
+                .insert(
+                    {
+                        "customer_id": customer_id,
+                        "store_id": store_id,
+                        "amount": amount,
+                        "timestamp": timestamp,
+                    }
+                )
+                .execute()
+            )
+            if hasattr(resp, "data") and resp.data:
                 result_msg = "Transaction added successfully!"
-                url = request.url_for("transaction_entry_form").include_query_params(result=result_msg)
+                url = request.url_for("transaction_entry_form").include_query_params(
+                    result=result_msg
+                )
                 return RedirectResponse(str(url), status_code=303)
             else:
                 result_msg = "Failed to add transaction."
-                url = request.url_for("transaction_entry_form").include_query_params(result=result_msg)
+                url = request.url_for("transaction_entry_form").include_query_params(
+                    result=result_msg
+                )
                 return RedirectResponse(str(url), status_code=303)
         except Exception as e:
             result_msg = f"Error: {str(e)}"
-            url = request.url_for("transaction_entry_form").include_query_params(result=result_msg)
+            url = request.url_for("transaction_entry_form").include_query_params(
+                result=result_msg
+            )
             return RedirectResponse(str(url), status_code=303)
