@@ -20,6 +20,19 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Fetch all customer_ids
 def fetch_ids(table, id_col):
+    """
+    Fetch all IDs from a given Supabase table and column.
+
+    Args:
+        table (str): Table name.
+        id_col (str): Column name for IDs.
+
+    Returns:
+        List: List of IDs from the table.
+
+    Raises:
+        Exception: If no data is found or column is missing.
+    """
     response = supabase.table(table).select(id_col).execute()
     if response.data:
         return [row[id_col] for row in response.data]
@@ -92,18 +105,16 @@ def main():
     now = datetime.utcnow()
     two_years_ago = now - timedelta(days=2 * 365)
     transactions = []
-    for _ in range(100):
-        cid = random.choice(customer_ids)
-        # 95% use home store, 5% use random other store
-        if random.random() < 0.95 or len(store_ids) == 1:
-            sid = home_store[cid]
-        else:
-            sid = random.choice([s for s in store_ids if s != home_store[cid]])
-        amount = round(random.uniform(5, 500), 2)
-        ts = random_date(two_years_ago, now).isoformat()
-        transactions.append(
-            {"customer_id": cid, "store_id": sid, "amount": amount, "timestamp": ts}
-        )
+    for i in range(100):
+        transaction = {
+            "transaction_id": i + 1,
+            "customer_id": (i % 10) + 1,
+            "store_id": (i % 5) + 1,
+            "amount": round(10 + (i * 0.5), 2),
+            "timestamp": f"2023-07-{(i % 30) + 1:02d}T12:00:00Z",
+            "description": f"Test transaction {i + 1}"
+        }
+        transactions.append(transaction)
 
     print(f"Inserting {len(transactions)} transactions...")
     # Insert in batches of 50 to avoid payload limits

@@ -2,18 +2,15 @@
 Unit tests for utility functions
 """
 
-from unittest.mock import patch, AsyncMock
-
 import pytest
 from fastapi.testclient import TestClient
-
+from unittest.mock import patch, AsyncMock
 from app.main import app
+from app.utils import (call_llm, create_snapshot_prompt,
+                      process_world_bank_data, validate_country_code,
+                      validate_indicator_code)
 
 client = TestClient(app)
-
-from app.utils import (call_llm, create_snapshot_prompt,
-                       process_world_bank_data, validate_country_code,
-                       validate_indicator_code)
 
 
 class TestValidationFunctions:
@@ -214,7 +211,8 @@ def test_chat_followup_missing_snapshot_key():
         assert "snapshot_text" in response.json()["error"] or "Missing" in response.json()["error"]
 
 def test_chat_followup_missing_user_question():
-    from unittest.mock import patch, AsyncMock
+    from unittest.mock import AsyncMock, patch
+
     # Mock generate_snapshot_with_llm in app.routes to avoid real LLM call
     with patch("app.routes.generate_snapshot_with_llm", new_callable=AsyncMock) as mock_generate, \
          patch("app.routes.redis_client.set", new_callable=AsyncMock) as mock_redis_set:

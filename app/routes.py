@@ -19,15 +19,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from supabase import Client, create_client
+import traceback
+from app.utils import (call_llm, fetch_world_bank_data,
+                      generate_snapshot_with_llm, validate_country_code,
+                      validate_indicator_code)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
 
-import traceback
-
-from app.utils import (call_llm, fetch_world_bank_data,
-                       generate_snapshot_with_llm, validate_country_code,
-                       validate_indicator_code)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +40,15 @@ security = HTTPBasic()
 
 # Pydantic models for request/response
 class SnapshotRequest(BaseModel):
+    """
+    Request model for generating an economic development snapshot.
+
+    Attributes:
+        country_code (str): Country code (e.g., 'USA').
+        indicator_codes (List[str]): List of World Bank indicator codes.
+        year (Optional[int]): Year for the snapshot (optional).
+        llm_provider (str): LLM provider to use (default: 'lm_studio').
+    """
     country_code: str = "USA"  # United States is valid for NY.GDP.MKTP.CD
     indicator_codes: List[str] = ["NY.GDP.MKTP.CD"]
     year: Optional[int] = 2021
@@ -104,7 +112,10 @@ async def get_available_countries():
 @api_router.get("/indicators", response_model=List[Dict[str, str]])
 async def get_available_indicators():
     """
-    Get list of available economic indicators
+    Get list of available economic indicators.
+
+    Returns:
+        List[Dict[str, str]]: List of indicator code/name pairs.
     """
     try:
         # Sample economic indicators from World Bank
@@ -147,7 +158,13 @@ async def get_available_indicators():
 @api_router.post("/generate-snapshot", response_model=SnapshotResponse)
 async def generate_snapshot(request: SnapshotRequest):
     """
-    Generate an economic development snapshot for a country
+    Generate an economic development snapshot for a country using World Bank data and an LLM.
+
+    Args:
+        request (SnapshotRequest): Request body with country, indicators, year, and LLM provider.
+
+    Returns:
+        SnapshotResponse: Snapshot and metadata, or error JSONResponse.
     """
     try:
         # Validate inputs
@@ -278,9 +295,14 @@ async def api_health_check():
 @api_router.post("/data-quality/scan")
 async def data_quality_scan(request: Request, action: str = Body("report_only")):
     """
-    Step 1: Data Quality Agent for Supabase Tables
-    Accepts 'action' parameter: 'report_only' or 'report_and_fix'.
-    If 'report_and_fix', attempts to fix detected issues.
+    Data Quality Agent for Supabase Tables.
+
+    Args:
+        request (Request): FastAPI request object.
+        action (str): 'report_only' or 'report_and_fix'.
+
+    Returns:
+        JSONResponse: Data quality findings, anomalies, and fix actions.
     """
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -699,6 +721,17 @@ async def data_quality_dashboard(
 
 @api_router.post("/chat-followup")
 async def chat_followup(snapshot_key: str = Body(...), user_question: str = Body(...), prev_chat_key: str = Body(None)):
+    """
+    Handle follow-up chat questions about a generated snapshot.
+
+    Args:
+        snapshot_key (str): Redis key for the snapshot.
+        user_question (str): User's follow-up question.
+        prev_chat_key (str, optional): Previous chat key for context.
+
+    Returns:
+        dict: Answer, chat_key, and turn_index, or error JSONResponse.
+    """
     logger = logging.getLogger(__name__)
     try:
         snapshot_text = await redis_client.get(f"snapshot:{snapshot_key}")
@@ -1084,6 +1117,12 @@ async def add_transaction(request: Request):
 # Public endpoint: redacted data
 @api_router.get("/transactions/public")
 async def get_public_transactions():
+    """
+    Get public (redacted) transaction data from Supabase.
+
+    Returns:
+        dict: Customers and transactions data.
+    """
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
@@ -1106,6 +1145,15 @@ async def get_public_transactions():
 # Admin endpoint: full data, requires dashboard login
 @api_router.get("/transactions/admin")
 async def get_admin_transactions(credentials: HTTPBasicCredentials = Depends(security)):
+    """
+    Get full transaction data for admin users (requires authentication).
+
+    Args:
+        credentials (HTTPBasicCredentials): Username and password for admin access.
+
+    Returns:
+        dict: Customers and transactions data.
+    """
     username = credentials.username
     password = credentials.password
     import hashlib

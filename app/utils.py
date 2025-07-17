@@ -27,8 +27,6 @@ print("Python executable:", sys.executable)
 try:
     settings.validate()
 except Exception as e:
-    import logging
-
     logging.error(f"LLM configuration error: {e}")
     raise
 
@@ -52,6 +50,12 @@ COUNTRY_CODE_TO_NAME = {}
 
 
 async def fetch_country_code_mapping():
+    """
+    Fetches a mapping of country codes to country names from the World Bank API and stores it in the global COUNTRY_CODE_TO_NAME.
+    
+    Returns:
+        None
+    """
     global COUNTRY_CODE_TO_NAME
     url = "https://api.worldbank.org/v2/country?format=json&per_page=400"
     async with aiohttp.ClientSession() as session:
@@ -69,7 +73,15 @@ async def fetch_world_bank_data(
     country_code: str, indicator_codes: List[str], year: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Fetch economic data from World Bank API with a timeout
+    Fetch economic data from the World Bank API with a timeout.
+
+    Args:
+        country_code (str): The country code to fetch data for.
+        indicator_codes (List[str]): List of indicator codes to fetch.
+        year (Optional[int]): Year to fetch data for. If None, fetches the last 5 years.
+
+    Returns:
+        Optional[Dict[str, Any]]: Processed data dictionary or None if an error occurs.
     """
     try:
         timeout = aiohttp.ClientTimeout(total=15)  # 15-second timeout
@@ -82,7 +94,7 @@ async def fetch_world_bank_data(
                 params["date"] = str(year)
             else:
                 current_year = datetime.now().year
-                params["date"] = f"{current_year-5}:{current_year}"
+                params["date"] = f"{current_year - 5}:{current_year}"
             logger.info(f"Fetching data from World Bank API: {url}")
             try:
                 async with session.get(url, params=params) as response:
@@ -109,7 +121,15 @@ def process_world_bank_data(
     raw_data: List, country_code: str, indicator_codes: List[str]
 ) -> Optional[Dict[str, Any]]:
     """
-    Process raw World Bank API response into structured format
+    Process raw World Bank API response into a structured format.
+
+    Args:
+        raw_data (List): Raw data returned from the World Bank API.
+        country_code (str): The country code for the data.
+        indicator_codes (List[str]): List of indicator codes to process.
+
+    Returns:
+        Optional[Dict[str, Any]]: Processed data dictionary or None if data is invalid.
     """
     if not raw_data or len(raw_data) < 2:
         return None
@@ -172,8 +192,15 @@ async def generate_snapshot_with_llm(
     country_code: str, data: Dict[str, Any], llm_provider: str = "openai"
 ) -> str:
     """
-    Generate economic development snapshot using LLM
-    Returns (text, payload_dict)
+    Generate economic development snapshot using an LLM.
+
+    Args:
+        country_code (str): The country code for the snapshot.
+        data (Dict[str, Any]): Processed economic data.
+        llm_provider (str): LLM provider to use ("openai" or "lm_studio").
+
+    Returns:
+        str: Generated snapshot text or error message.
     """
     try:
         # Prepare the data for LLM
@@ -197,7 +224,14 @@ async def generate_snapshot_with_llm(
 
 def create_snapshot_prompt(country_name: str, indicators: List[Dict[str, Any]]) -> str:
     """
-    Create a structured prompt for the LLM
+    Create a structured prompt for the LLM based on country and indicator data.
+
+    Args:
+        country_name (str): Name of the country.
+        indicators (List[Dict[str, Any]]): List of indicator data.
+
+    Returns:
+        str: Prompt string for the LLM.
     """
     prompt = f"""You are an economic analyst. Generate a comprehensive economic development snapshot for {country_name} based on the following data.
 
@@ -228,7 +262,12 @@ LLM_TIMEOUT = 300  # 5 minutes
 async def generate_with_openai(prompt: str):
     """
     Generate text using OpenAI API via langchain_openai.OpenAI with a longer timeout.
-    Returns (text, payload_dict)
+
+    Args:
+        prompt (str): The prompt to send to the LLM.
+
+    Returns:
+        Tuple[str, dict]: Generated text and payload dictionary.
     """
     try:
         if not settings.OPENAI_API_KEY:
@@ -266,6 +305,15 @@ async def generate_with_openai(prompt: str):
 
 
 async def generate_with_lm_studio(prompt: str):
+    """
+    Generate text using LM Studio (Mistral) via the OpenAI-compatible API.
+
+    Args:
+        prompt (str): The prompt to send to the LLM.
+
+    Returns:
+        Tuple[str, dict]: Generated text and payload dictionary.
+    """
     print("DEBUG: generate_with_lm_studio called")
     logger.debug(f"LM Studio URL: {settings.LM_STUDIO_URL}")
     logger.debug(f"LM Studio model: {settings.LM_STUDIO_MODEL}")
@@ -317,6 +365,13 @@ async def generate_with_lm_studio(prompt: str):
 async def call_llm(prompt: str, user_question: str) -> str:
     """
     Calls the Mistral LLM (via LM Studio) with the given prompt and user question.
+
+    Args:
+        prompt (str): The system prompt/context.
+        user_question (str): The user's question.
+
+    Returns:
+        str: LLM response content or error message.
     """
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -408,7 +463,13 @@ async def test_world_bank_connection() -> bool:
 
 async def test_llm_connection(llm_provider: str = "openai") -> bool:
     """
-    Test connection to LLM provider
+    Test connection to LLM provider.
+
+    Args:
+        llm_provider (str): LLM provider to test ("openai" or "lm_studio").
+
+    Returns:
+        bool: True if connection is successful, False otherwise.
     """
     try:
         test_prompt = "Generate a one-sentence economic analysis."
@@ -459,6 +520,9 @@ async def call_llm_chatbot(prompt: str, user_question: str) -> str:
 
 
 def setup_logging():
+    """
+    Set up logging configuration for the application.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
@@ -472,7 +536,12 @@ setup_logging()
 async def filter_with_guardrails(text: str) -> tuple:
     """
     Uses guardrails.ai to check for toxicity, PII, and risky business info.
-    Returns (is_flagged: bool, category: str or None)
+
+    Args:
+        text (str): The text to check.
+
+    Returns:
+        tuple: (is_flagged: bool, category: str or None)
     """
     try:
         import guardrails as gr

@@ -123,9 +123,12 @@ def test_chat_followup_chat_history():
         # First two calls to get() return previous chat turns, then None
         prev_turns = [json.dumps({"question": "Q1", "answer": "A1"}), json.dumps({"question": "Q2", "answer": "A2"}), "summary", None]
         def get_side_effect(key):
-            if key.endswith(":0"): return prev_turns[0]
-            if key.endswith(":1"): return prev_turns[1]
-            if key.startswith("snapshot:"): return prev_turns[2]
+            if key.endswith(":0"):
+                return prev_turns[0]
+            if key.endswith(":1"):
+                return prev_turns[1]
+            if key.startswith("snapshot:"):
+                return prev_turns[2]
             return prev_turns[3]
         mock_get.side_effect = get_side_effect
         mock_exists.side_effect = [True, True, False]

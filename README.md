@@ -110,9 +110,33 @@ poetry run pytest -v
 ### Linting
 ```sh
 poetry run black --check .
-poetry run flake8 .
+poetry run flake8 --ignore=E501 .  # Ignores line too long
 poetry run isort --check-only .
+poetry run ruff check .
 ```
+
+### Code Formatting & Docstrings
+- All code is auto-formatted with Black and isort.
+- Linting is enforced with flake8 (except line length) and ruff.
+- Use Google-style or Sphinx-style docstrings for all public functions and classes.
+- Keep imports at the top of each file (per PEP8).
+
+### Error Handling
+- All API endpoints and utility functions include robust error handling and logging.
+- User-facing errors are returned as JSON with appropriate HTTP status codes.
+- Backend logs provide detailed tracebacks for debugging.
+
+### Dashboard & Snapshot UI
+- The dashboard snapshot and chat UI now use JSON-based AJAX for all interactions.
+- Snapshot generation and follow-up chat are fully asynchronous and stateful, with Redis for session/chat storage.
+
+### FastAPI Deprecation Note
+- You may see a warning about `@app.on_event("startup")` being deprecated. This does not affect functionality, but you can migrate to FastAPI's new lifespan event handlers in the future.
+
+### Code Documentation
+- All public functions and classes use Google-style docstrings for clarity and consistency.
+- Inline comments are added to clarify non-obvious logic and important implementation details.
+- Please follow these standards for any new code or contributions.
 
 ## Contributing
 - Please open issues or pull requests for improvements or bugfixes.
