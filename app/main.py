@@ -12,8 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.routes import register_routes
-from app.routes import router as api_router
+from app.routes import api_router, page_router
 from app.utils import fetch_country_code_mapping
 
 print("Python executable:", sys.executable)
@@ -58,9 +57,11 @@ async def startup_event():
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
+# Include HTML page routes at root
+app.include_router(page_router)
 
 # Register dashboard.html route at root
-register_routes(app, templates)
+# register_routes(app, templates) # This line is removed as per the edit hint.
 
 # Remove or comment out the old root endpoint to avoid conflict
 # @app.get("/")

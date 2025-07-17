@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Transactions</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>.top-right{position:absolute;top:1rem;right:1rem;}</style>
+</head>
+<body>
+    <div class="top-right">
+        <a href="/transactions/admin-login"><button type="button">Admin Login</button></a>
+    </div>
+    <h1>Recent Transactions (Public)</h1>
+    <div id="transactions-error" style="color:red;display:none;"></div>
+    <table id="transactions-table" style="width:100%;border-collapse:collapse;margin-top:1em;">
+        <thead>
+            <tr>
+                <th>Transaction ID</th>
+                <th>Customer ID</th>
+                <th>Store ID</th>
+                <th>Amount</th>
+                <th>Timestamp</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Will be filled by JS -->
+        </tbody>
+    </table>
+    <script>
+    async function loadTransactions() {
+        document.getElementById('transactions-error').style.display = 'none';
+        try {
+            const resp = await fetch('/api/v1/transactions/recent');
+            if (!resp.ok) throw new Error('Failed to fetch transactions');
+            const data = await resp.json();
+            const tbody = document.querySelector('#transactions-table tbody');
+            tbody.innerHTML = '';
+            for (const tx of data.transactions) {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${tx.transaction_id ?? ''}</td>
+                    <td>${tx.customer_id ?? ''}</td>
+                    <td>${tx.store_id ?? ''}</td>
+                    <td>${tx.amount ?? ''}</td>
+                    <td>${tx.timestamp ?? ''}</td>
+                    <td>${tx.description ?? ''}</td>
+                `;
+                tbody.appendChild(row);
+            }
+        } catch (e) {
+            document.getElementById('transactions-error').textContent = e.message;
+            document.getElementById('transactions-error').style.display = 'block';
+        }
+    }
+    window.onload = loadTransactions;
+    </script>
+</body>
+</html> 

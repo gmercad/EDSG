@@ -4,13 +4,14 @@
     <meta charset="UTF-8">
     <title>New Transaction Entry</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <style>.top-right{position:absolute;top:1rem;right:1rem;}</style>
 </head>
 <body>
     <div class="top-right">
         {% if username %}
-            <span>Logged in as {{ username }}</span>
+            <span>Logged in as {{ username }}</span> <a href="/logout"><button type="button">Logout</button></a>
         {% else %}
-            <a href="/data-quality/dashboard"><button type="button">Service Role Login</button></a>
+            <a href="/login"><button type="button">Service Role Login</button></a>
         {% endif %}
     </div>
     <h1>Enter a New Transaction</h1>
@@ -18,40 +19,132 @@
         <label for="customer_id">Customer:</label>
         <select id="customer_id" name="customer_id" required>
             <option value="">Select a customer</option>
-            {% for customer in customers %}
-                <option value="{{ customer.customer_id }}" {% if request.query_params.get('customer_id') == customer.customer_id|string %}selected{% endif %}>{{ customer.first_name }} {{ customer.last_name }}</option>
+            {% for c in customers %}
+                <option value="{{ c.customer_id }}" {% if customer_id == c.customer_id|string %}selected{% endif %}>{{ c.first_name }} {{ c.last_name }}</option>
             {% endfor %}
         </select>
-
         <label for="store_id">Store:</label>
         <select id="store_id" name="store_id" required>
             <option value="">Select a store</option>
-            {% for store in stores %}
-                <option value="{{ store.store_id }}" {% if request.query_params.get('store_id') == store.store_id|string %}selected{% endif %}>{{ store.name }}</option>
+            {% for s in stores %}
+                <option value="{{ s.store_id }}" {% if store_id == s.store_id|string %}selected{% endif %}>{{ s.name }}</option>
             {% endfor %}
         </select>
-
         <label for="amount">Amount (USD):</label>
-        <input type="number" id="amount" name="amount" min="0.01" step="0.01" required value="{{ request.query_params.get('amount', '') }}">
-
+        <input type="number" id="amount" name="amount" min="0.01" step="0.01" required value="{{ amount }}">
         <label for="timestamp">Timestamp:</label>
-        <input type="datetime-local" id="timestamp" name="timestamp" required value="{{ request.query_params.get('timestamp', '') }}">
-
-        {% if request.query_params.get('show_duplicate_options') %}
-            <div class="alert error" style="margin-bottom: 1rem;">
-                {{ result }}
+        <input type="datetime-local" id="timestamp" name="timestamp" required value="{{ timestamp }}">
+        {% if show_duplicate_options %}
+            <div class='alert error' style='margin-bottom: 1rem;'>
+                {{ result or '' }}
             </div>
-            <div style="margin-bottom: 1rem;">
-                <label><input type="radio" name="duplicate_action" value="block" required> Block Duplicate</label>
-                <label><input type="radio" name="duplicate_action" value="allow" required> Allow Duplicate</label>
-                <label><input type="radio" name="duplicate_action" value="prompt" required> Show Duplicates</label>
+            <div style='margin-bottom: 1rem;'>
+                <label><input type='radio' name='duplicate_action' value='block' required> Block Duplicate</label>
+                <label><input type='radio' name='duplicate_action' value='allow' required> Allow Duplicate</label>
             </div>
         {% endif %}
-
         <button type="submit">Submit Transaction</button>
     </form>
-    {% if result and not request.query_params.get('show_duplicate_options') %}
+    {% if result and not show_duplicate_options %}
         <div id="result">{{ result }}</div>
     {% endif %}
+
+    <!-- Recent Transactions Visualization (JS-powered) -->
+    <div id="recent-transactions-container" style="margin-top:2rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <h2>Recent Transactions</h2>
+        <span id="data-badge" style="padding:0.3em 0.8em;border-radius:1em;background:#e0e0e0;color:#333;font-size:0.9em;"></span>
+        <button id="refresh-transactions" type="button">Refresh</button>
+      </div>
+      <div id="transactions-loading" style="display:none;">Loading...</div>
+      <div id="transactions-error" style="color:red;display:none;"></div>
+      <table id="transactions-table" style="width:100%;border-collapse:collapse;margin-top:1em;">
+        <thead>
+          <tr id="transactions-header"></tr>
+        </thead>
+        <tbody id="transactions-body"></tbody>
+      </table>
+    </div>
+
+    <script>
+    async function fetchRecentTransactions(isAdmin) {
+      document.getElementById('transactions-loading').style.display = 'block';
+      document.getElementById('transactions-error').style.display = 'none';
+      let url = isAdmin ? '/api/v1/transactions/recent/admin' : '/api/v1/transactions/recent';
+      let headers = {};
+      if (isAdmin) {
+        // Use basic auth if available (prompt for now)
+        let user = localStorage.getItem('admin_user') || '';
+        let pass = localStorage.getItem('admin_pass') || '';
+        if (!user || !pass) {
+          user = prompt('Admin username:');
+          pass = prompt('Admin password:');
+          localStorage.setItem('admin_user', user);
+          localStorage.setItem('admin_pass', pass);
+        }
+        headers['Authorization'] = 'Basic ' + btoa(user + ':' + pass);
+      }
+      try {
+        const resp = await fetch(url, {headers});
+        if (resp.status === 401) {
+          document.getElementById('transactions-error').textContent = 'Unauthorized. Please log in as admin.';
+          document.getElementById('transactions-error').style.display = 'block';
+          document.getElementById('transactions-loading').style.display = 'none';
+          return null;
+        }
+        if (!resp.ok) throw new Error('Failed to fetch transactions');
+        const data = await resp.json();
+        document.getElementById('transactions-loading').style.display = 'none';
+        return data.transactions;
+      } catch (e) {
+        document.getElementById('transactions-error').textContent = e.message;
+        document.getElementById('transactions-error').style.display = 'block';
+        document.getElementById('transactions-loading').style.display = 'none';
+        return null;
+      }
+    }
+
+    function renderTransactionsTable(transactions) {
+      const table = document.getElementById('transactions-table');
+      const header = document.getElementById('transactions-header');
+      const body = document.getElementById('transactions-body');
+      body.innerHTML = '';
+      if (!transactions || transactions.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td colspan="10">No transactions found.</td></tr>';
+        return;
+      }
+      // Dynamically set columns based on keys in first row
+      const columns = Object.keys(transactions[0]);
+      header.innerHTML = columns.map(col => `<th style='border-bottom:1px solid #ccc;text-align:left;padding:0.5em;'>${col}</th>`).join('');
+      for (const txn of transactions) {
+        const row = document.createElement('tr');
+        for (const col of columns) {
+          const td = document.createElement('td');
+          td.textContent = txn[col] !== null ? txn[col] : '';
+          td.style.padding = '0.5em';
+          row.appendChild(td);
+        }
+        body.appendChild(row);
+      }
+    }
+
+    async function loadRecentTransactions() {
+      // Try admin first if user is logged in, else fallback to public
+      let isAdmin = false;
+      let transactions = await fetchRecentTransactions(true);
+      if (transactions) {
+        document.getElementById('data-badge').textContent = 'Admin Data';
+        isAdmin = true;
+      } else {
+        transactions = await fetchRecentTransactions(false);
+        document.getElementById('data-badge').textContent = 'Public Data';
+      }
+      renderTransactionsTable(transactions);
+    }
+
+    document.getElementById('refresh-transactions').addEventListener('click', loadRecentTransactions);
+    window.addEventListener('DOMContentLoaded', loadRecentTransactions);
+    </script>
 </body>
 </html> 

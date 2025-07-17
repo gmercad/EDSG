@@ -34,6 +34,47 @@ def random_date(start, end):
     )
 
 
+# Mock customers with sensitive fields
+mock_customers = [
+    {
+        "id": 1,
+        "name": "Alice Smith",
+        "email": "alice@example.com",
+        "phone": "555-1234",
+        "address": "123 Main St, Springfield",
+        "privileged_notes": "VIP customer, prefers email contact."
+    },
+    {
+        "id": 2,
+        "name": "Bob Jones",
+        "email": "bob@example.com",
+        "phone": "555-5678",
+        "address": "456 Elm St, Springfield",
+        "privileged_notes": "Flagged for review."
+    }
+]
+
+# Mock transactions with sensitive fields
+mock_transactions = [
+    {
+        "id": 101,
+        "customer_id": 1,
+        "store_id": 10,
+        "amount": 100.0,
+        "timestamp": "2025-07-16T12:00:00Z",
+        "privileged_notes": "Large purchase, check for fraud."
+    },
+    {
+        "id": 102,
+        "customer_id": 2,
+        "store_id": 11,
+        "amount": 50.0,
+        "timestamp": "2025-07-16T13:00:00Z",
+        "privileged_notes": "Returned item, refund issued."
+    }
+]
+
+
 def main():
     # Adjust these column names if needed
     customer_id_col = "customer_id"

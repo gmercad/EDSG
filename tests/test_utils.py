@@ -2,10 +2,11 @@
 Unit tests for utility functions
 """
 
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
+
 from app.main import app
 
 client = TestClient(app)
@@ -205,21 +206,30 @@ async def test_call_llm_error():
 
 
 def test_chat_followup_missing_snapshot_key():
-    response = client.post("/api/v1/chat-followup", json={"snapshot_key": "", "user_question": "What is the GDP?"})
-    assert response.status_code == 400
-    assert "error" in response.json()
-    assert "snapshot_text" in response.json()["error"] or "Missing" in response.json()["error"]
+    with patch("app.routes.redis_client.get", new_callable=AsyncMock) as mock_redis_get:
+        mock_redis_get.return_value = None
+        response = client.post("/api/v1/chat-followup", json={"snapshot_key": "", "user_question": "What is the GDP?"})
+        assert response.status_code == 400
+        assert "error" in response.json()
+        assert "snapshot_text" in response.json()["error"] or "Missing" in response.json()["error"]
 
 def test_chat_followup_missing_user_question():
-    # First, generate a snapshot to get a valid key
-    resp = client.post("/api/v1/generate-snapshot", json={"country_code": "USA", "indicator_codes": ["NY.GDP.MKTP.CD"]})
-    assert resp.status_code == 200
-    snapshot_key = resp.json()["metadata"]["snapshot_key"]
-    # Now, call chat-followup with missing user_question
-    response = client.post("/api/v1/chat-followup", json={"snapshot_key": snapshot_key, "user_question": ""})
-    assert response.status_code == 400
-    assert "error" in response.json()
-    assert "user_question" in response.json()["error"] or "Missing" in response.json()["error"]
+    from unittest.mock import patch, AsyncMock
+    # Mock generate_snapshot_with_llm in app.routes to avoid real LLM call
+    with patch("app.routes.generate_snapshot_with_llm", new_callable=AsyncMock) as mock_generate, \
+         patch("app.routes.redis_client.set", new_callable=AsyncMock) as mock_redis_set:
+        mock_generate.return_value = ("Snapshot text", {"llm_payload": {}})
+        mock_redis_set.return_value = None  # Simulate successful set
+        resp = client.post("/api/v1/generate-snapshot", json={"country_code": "USA", "indicator_codes": ["NY.GDP.MKTP.CD"]})
+        assert resp.status_code == 200
+        snapshot_key = resp.json()["metadata"]["snapshot_key"]
+        # Now, call chat-followup with missing user_question
+        with patch("app.routes.redis_client.get", new_callable=AsyncMock) as mock_redis_get:
+            mock_redis_get.return_value = "Snapshot text"
+            response = client.post("/api/v1/chat-followup", json={"snapshot_key": snapshot_key, "user_question": ""})
+            assert response.status_code == 400
+            assert "error" in response.json()
+            assert "user_question" in response.json()["error"] or "Missing" in response.json()["error"]
 
 
 if __name__ == "__main__":

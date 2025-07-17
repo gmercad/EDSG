@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Transactions</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>.top-right{position:absolute;top:1rem;right:1rem;}</style>
+</head>
+<body>
+    <div class="top-right">
+        <span>Logged in as {{ username }}</span>
+        <a href="/transactions/logout"><button type="button">Logout</button></a>
+    </div>
+    <h1>Recent Transactions (Admin)</h1>
+    <div id="transactions-error" style="color:red;display:none;"></div>
+    <table id="transactions-table" style="width:100%;border-collapse:collapse;margin-top:1em;">
+        <thead>
+            <tr>
+                <th>Transaction ID</th>
+                <th>Customer ID</th>
+                <th>Store ID</th>
+                <th>Amount</th>
+                <th>Timestamp</th>
+                <th>Description</th>
+                <th>Privileged Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Will be filled by JS -->
+        </tbody>
+    </table>
+    <h2 style="margin-top:2em;">Enter a New Transaction</h2>
+    <form id="new-transaction-form" action="/transactions/new" method="post">
+        <label for="customer_id">Customer ID:</label>
+        <input type="number" id="customer_id" name="customer_id" required><br><br>
+        <label for="store_id">Store ID:</label>
+        <input type="number" id="store_id" name="store_id" required><br><br>
+        <label for="amount">Amount:</label>
+        <input type="number" step="0.01" id="amount" name="amount" required><br><br>
+        <label for="timestamp">Timestamp:</label>
+        <input type="datetime-local" id="timestamp" name="timestamp" required><br><br>
+        <label for="description">Description:</label>
+        <input type="text" id="description" name="description"><br><br>
+        <label for="privileged_notes">Privileged Notes:</label>
+        <input type="text" id="privileged_notes" name="privileged_notes"><br><br>
+        <button type="submit">Submit</button>
+    </form>
+    <div id="form-result" style="margin-top:1em;color:green;"></div>
+    <script>
+    async function loadAdminTransactions() {
+        document.getElementById('transactions-error').style.display = 'none';
+        try {
+            const resp = await fetch('/api/v1/transactions/recent/admin', {credentials: 'same-origin'});
+            if (!resp.ok) throw new Error('Failed to fetch transactions');
+            const data = await resp.json();
+            const tbody = document.querySelector('#transactions-table tbody');
+            tbody.innerHTML = '';
+            for (const tx of data.transactions) {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${tx.transaction_id ?? ''}</td>
+                    <td>${tx.customer_id ?? ''}</td>
+                    <td>${tx.store_id ?? ''}</td>
+                    <td>${tx.amount ?? ''}</td>
+                    <td>${tx.timestamp ?? ''}</td>
+                    <td>${tx.description ?? ''}</td>
+                    <td>${tx.privileged_notes ?? ''}</td>
+                `;
+                tbody.appendChild(row);
+            }
+        } catch (e) {
+            document.getElementById('transactions-error').textContent = e.message;
+            document.getElementById('transactions-error').style.display = 'block';
+        }
+    }
+    window.onload = loadAdminTransactions;
+    // Optionally, handle form submission via AJAX for better UX
+    </script>
+</body>
+</html> 

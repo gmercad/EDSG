@@ -8,26 +8,24 @@ import json
 import logging
 import os
 import secrets
+import uuid
 from typing import Any, Dict, List, Optional
 
-import httpx
-from fastapi import (APIRouter, Body, Depends, FastAPI, Form, HTTPException,
-                     Request)
+# Redis async client
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from supabase import Client, create_client
-import uuid
-
-# Redis async client
-import os
-import redis.asyncio as aioredis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
 
-from app.utils import (call_llm, fetch_world_bank_data, filter_with_guardrails,
+import traceback
+
+from app.utils import (call_llm, fetch_world_bank_data,
                        generate_snapshot_with_llm, validate_country_code,
                        validate_indicator_code)
 
@@ -35,7 +33,8 @@ from app.utils import (call_llm, fetch_world_bank_data, filter_with_guardrails,
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+api_router = APIRouter()
+page_router = APIRouter()
 
 security = HTTPBasic()
 
@@ -76,7 +75,7 @@ def make_json_safe(obj):
         return str(obj)
 
 
-@router.get("/countries", response_model=List[Dict[str, str]])
+@api_router.get("/countries", response_model=List[Dict[str, str]])
 async def get_available_countries():
     """
     Get list of available countries with their codes and names
@@ -102,7 +101,7 @@ async def get_available_countries():
         raise HTTPException(status_code=500, detail="Failed to fetch countries")
 
 
-@router.get("/indicators", response_model=List[Dict[str, str]])
+@api_router.get("/indicators", response_model=List[Dict[str, str]])
 async def get_available_indicators():
     """
     Get list of available economic indicators
@@ -145,7 +144,7 @@ async def get_available_indicators():
         raise HTTPException(status_code=500, detail="Failed to fetch indicators")
 
 
-@router.post("/generate-snapshot", response_model=SnapshotResponse)
+@api_router.post("/generate-snapshot", response_model=SnapshotResponse)
 async def generate_snapshot(request: SnapshotRequest):
     """
     Generate an economic development snapshot for a country
@@ -226,7 +225,7 @@ async def generate_snapshot(request: SnapshotRequest):
         )
 
 
-@router.get("/data/{country_code}")
+@api_router.get("/data/{country_code}")
 async def get_country_data(
     country_code: str = Request,
     indicators: str = Request,
@@ -267,7 +266,7 @@ async def get_country_data(
         raise HTTPException(status_code=500, detail="Failed to fetch country data")
 
 
-@router.get("/health")
+@api_router.get("/health")
 async def api_health_check():
     """
     Health check for the API
@@ -276,7 +275,7 @@ async def api_health_check():
 
 
 # --- Data Quality Agent Endpoint ---
-@router.post("/data-quality/scan")
+@api_router.post("/data-quality/scan")
 async def data_quality_scan(request: Request, action: str = Body("report_only")):
     """
     Step 1: Data Quality Agent for Supabase Tables
@@ -630,7 +629,7 @@ async def data_quality_scan(request: Request, action: str = Body("report_only"))
 
 
 # --- Data Quality Dashboard Endpoint (service_role only) ---
-@router.get("/data-quality/dashboard")
+@api_router.get("/data-quality/dashboard")
 async def data_quality_dashboard(
     request: Request, credentials: HTTPBasicCredentials = Depends(security)
 ):
@@ -698,7 +697,7 @@ async def data_quality_dashboard(
     return JSONResponse({"status": "success", "logs": logs})
 
 
-@router.post("/chat-followup")
+@api_router.post("/chat-followup")
 async def chat_followup(snapshot_key: str = Body(...), user_question: str = Body(...), prev_chat_key: str = Body(None)):
     logger = logging.getLogger(__name__)
     try:
@@ -786,474 +785,466 @@ async def chat_followup(snapshot_key: str = Body(...), user_question: str = Body
         )
 
 
-@router.api_route("/dashboard", methods=["GET", "POST"])
-async def dashboard(request: Request):
-    snapshot_text = ""
-    chat_answer = ""
-    user_question = ""
-    country_code = ""
-    indicator_codes = ""
-    year = ""
-    llm_provider = "lm_studio"
-    snapshot_key = ""
-    error_message = ""
-    chat_history = []
-    chat_key = None
-    if request.method == "POST":
-        form = await request.form()
-        if "generate_snapshot" in form:
-            country_code = form.get("country_code")
-            indicator_codes = form.get("indicator_codes")
-            error_message = ""
-            if not country_code or not indicator_codes:
-                error_message = "Country and indicator(s) are required. Please select both before generating a snapshot."
-                context = {
-                    "country_code": country_code,
-                    "indicator_codes": [],
-                    "year": form.get("year"),
-                    "llm_provider": form.get("llm_provider", "lm_studio"),
-                    "snapshot_key": "",
-                    "snapshot_text": "",
-                    "chat_history": [],
-                    "chat_key": None,
-                    "user_question": "",
-                    "chat_answer": "",
-                    "error_message": error_message,
-                }
-                return Jinja2Templates(directory="app/templates").TemplateResponse(
-                    "dashboard.html", {"request": request, **context}
-                )
-            if isinstance(indicator_codes, str):
-                indicator_codes_list = [s.strip() for s in indicator_codes.split(",") if s.strip()]
-            else:
-                indicator_codes_list = indicator_codes
-            year_str = form.get("year", "")
-            year = int(year_str) if year_str else None
-            llm_provider = form.get("llm_provider") or "lm_studio"
-            from app.routes import SnapshotRequest, generate_snapshot
-            snapshot_resp = await generate_snapshot(
-                SnapshotRequest(
-                    country_code=country_code,
-                    indicator_codes=indicator_codes_list,
-                    year=year,
-                    llm_provider=llm_provider,
-                )
-            )
-            if hasattr(snapshot_resp, "snapshot_text"):
-                snapshot_text = snapshot_resp.snapshot_text
-            elif isinstance(snapshot_resp, dict) and "snapshot_text" in snapshot_resp:
-                snapshot_text = snapshot_resp["snapshot_text"]
-            if hasattr(snapshot_resp, "metadata") and "snapshot_key" in snapshot_resp.metadata:
-                snapshot_key = snapshot_resp.metadata["snapshot_key"]
-            elif isinstance(snapshot_resp, dict) and "metadata" in snapshot_resp and "snapshot_key" in snapshot_resp["metadata"]:
-                snapshot_key = snapshot_resp["metadata"]["snapshot_key"]
-            chat_history = []
-            chat_key = None
-            # Set indicator_codes for template
-            indicator_codes = indicator_codes_list
-        elif "ask_question" in form:
-            snapshot_key = form.get("snapshot_key", "")
-            user_question = form.get("user_question", "")
-            chat_key = form.get("chat_key", None)
-            # Restore previous selections for template
-            country_code = form.get("country_code")
-            indicator_codes = form.get("indicator_codes")
-            if isinstance(indicator_codes, str):
-                indicator_codes_list = [s.strip() for s in indicator_codes.split(",") if s.strip()]
-            else:
-                indicator_codes_list = indicator_codes
-            year_str = form.get("year", "")
-            year = int(year_str) if year_str else None
-            llm_provider = form.get("llm_provider") or "lm_studio"
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    "http://127.0.0.1:8000/api/v1/chat-followup",
-                    json={
-                        "snapshot_key": snapshot_key,
-                        "user_question": user_question,
-                        "prev_chat_key": chat_key,
-                    },
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    chat_answer = data.get("answer", "")
-                    chat_key = data.get("chat_key", None)
-                    chat_history = []
-                    idx = 0
-                    while True:
-                        chat_turn = await redis_client.get(f"chat:{snapshot_key}:{idx}")
-                        if not chat_turn:
-                            break
-                        chat_history.append(json.loads(chat_turn))
-                        idx += 1
-                else:
-                    error_message = resp.json().get("error", resp.text)
-                    chat_history = []
-                    idx = 0
-                    while True:
-                        chat_turn = await redis_client.get(f"chat:{snapshot_key}:{idx}")
-                        if not chat_turn:
-                            break
-                        chat_history.append(json.loads(chat_turn))
-                        idx += 1
-            indicator_codes = indicator_codes_list
-    else:
-        chat_history = []
-    context = {
-        "country_code": country_code,
-        "indicator_codes": indicator_codes_list,
-        "year": year,
-        "llm_provider": llm_provider,
-        "snapshot_key": snapshot_key,
-        "snapshot_text": snapshot_text,
-        "chat_history": chat_history,
-        "chat_key": chat_key,
-        "user_question": user_question,
-        "chat_answer": chat_answer,
-        "error_message": error_message,
-    }
+# --- PAGE ROUTES (HTML) ---
+@page_router.get("/dashboard", response_class=HTMLResponse)
+async def home(request: Request):
     return Jinja2Templates(directory="app/templates").TemplateResponse(
-        "dashboard.html", {"request": request, **context}
+        "dashboard.html", {"request": request}
     )
 
-
-def register_routes(app: FastAPI, templates: Jinja2Templates):
-    @app.get("/", response_class=HTMLResponse)
-    async def home(request: Request):
-        return templates.TemplateResponse("dashboard.html", {"request": request})
-
-    @app.get("/login", response_class=HTMLResponse)
-    async def login_form(request: Request):
-        error = request.query_params.get("error")
-        next_url = request.query_params.get("next", "/transactions/entry")
-        html = f"""
-        <!DOCTYPE html>
-        <html lang='en'>
-        <head>
-            <meta charset='UTF-8'>
-            <title>Service Role Login</title>
-            <link rel='stylesheet' href='/static/styles.css'>
-            <style>.login-container{{max-width:400px;margin:4rem auto;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:2rem;}}.login-container h2{{text-align:center;color:#1a73e8;}}</style>
-        </head>
-        <body>
-            <div class='login-container'>
-                <h2>Service Role Login</h2>
-                {f"<div class='alert error'>{error}</div>" if error else ''}
-                <form method='post' action='/login'>
-                    <input type='hidden' name='next' value='{next_url}'>
-                    <label for='username'>Username:</label>
-                    <input type='text' id='username' name='username' required autofocus>
-                    <label for='password'>Password:</label>
-                    <input type='password' id='password' name='password' required>
-                    <button type='submit'>Login</button>
-                </form>
-            </div>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
-
-    @app.post("/login", response_class=HTMLResponse)
-    async def login_submit(
-        request: Request,
-        username: str = Form(...),
-        password: str = Form(...),
-        next: str = Form("/transactions/entry"),
-    ):
-        SUPABASE_URL = os.getenv("SUPABASE_URL")
-        SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            return HTMLResponse(
-                "<h2>Supabase URL or service_role key not set in environment variables.</h2>",
-                status_code=500,
-            )
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-        import hashlib
-
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        try:
-            resp = (
-                supabase.table("DashboardUsers")
-                .select("username, password_hash")
-                .eq("username", username)
-                .execute()
-            )
-            users = resp.data if hasattr(resp, "data") else resp
-            if not users or users[0]["password_hash"] != password_hash:
-                return RedirectResponse(
-                    f"/login?error=Invalid+username+or+password.&next={next}",
-                    status_code=303,
-                )
-        except Exception as e:
-            return RedirectResponse(
-                f"/login?error=Auth+error:+{str(e)}&next={next}", status_code=303
-            )
-        # Set session
-        request.session["username"] = username
-        return RedirectResponse(next, status_code=303)
-
-    @app.get("/logout")
-    async def logout(request: Request):
-        request.session.clear()
-        return RedirectResponse("/", status_code=303)
-
-    @app.get("/transactions/entry", response_class=HTMLResponse)
-    async def transaction_entry_form(request: Request):
-        username = request.session.get("username")
-        if not username:
-            return RedirectResponse("/login?next=/transactions/entry", status_code=303)
-        SUPABASE_URL = os.getenv("SUPABASE_URL")
-        SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            return HTMLResponse(
-                "<h2>Supabase URL or service_role key not set in environment variables.</h2>",
-                status_code=500,
-            )
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-        try:
-            customers_resp = (
-                supabase.table("Customers_test")
-                .select("customer_id, first_name, last_name")
-                .execute()
-            )
-            stores_resp = supabase.table("Stores").select("store_id, name").execute()
-            customers = (
-                customers_resp.data
-                if hasattr(customers_resp, "data")
-                else customers_resp
-            )
-            stores = stores_resp.data if hasattr(stores_resp, "data") else stores_resp
-        except Exception as e:
-            return HTMLResponse(
-                f"<h2>Error fetching customers or stores: {str(e)}</h2>",
-                status_code=500,
-            )
-        result = request.query_params.get("result")
-        # Pre-fill fields if present
-        customer_id = request.query_params.get("customer_id", "")
-        store_id = request.query_params.get("store_id", "")
-        amount = request.query_params.get("amount", "")
-        timestamp = request.query_params.get("timestamp", "")
-        show_duplicate_options = request.query_params.get("show_duplicate_options")
-        # Build dropdowns
-        customer_options = "<option value=''>Select a customer</option>" + "".join(
-            [
-                f"<option value='{c['customer_id']}'{' selected' if str(customer_id)==str(c['customer_id']) else ''}>{c['first_name']} {c['last_name']}</option>"
-                for c in customers
-            ]
-        )
-        store_options = "<option value=''>Select a store</option>" + "".join(
-            [
-                f"<option value='{s['store_id']}'{' selected' if str(store_id)==str(s['store_id']) else ''}>{s['name']}</option>"
-                for s in stores
-            ]
-        )
-        # Top right button
-        if username:
-            top_right = f"<span>Logged in as {username}</span> <a href='/logout'><button type='button'>Logout</button></a>"
-        else:
-            top_right = (
-                "<a href='/login'><button type='button'>Service Role Login</button></a>"
-            )
-        # Duplicate radio buttons
-        duplicate_html = ""
-        if show_duplicate_options:
-            duplicate_html = f"""
-            <div class='alert error' style='margin-bottom: 1rem;'>
-                {result or ''}
-            </div>
-            <div style='margin-bottom: 1rem;'>
-                <label><input type='radio' name='duplicate_action' value='block' required> Block Duplicate</label>
-                <label><input type='radio' name='duplicate_action' value='allow' required> Allow Duplicate</label>
-            </div>
-            """
-        # Main form
-        html = f"""
-        <!DOCTYPE html>
-        <html lang='en'>
-        <head>
-            <meta charset='UTF-8'>
-            <title>New Transaction Entry</title>
-            <link rel='stylesheet' href='/static/styles.css'>
-            <style>.top-right{{position:absolute;top:1rem;right:1rem;}}</style>
-        </head>
-        <body>
-            <div class='top-right'>{top_right}</div>
-            <h1>Enter a New Transaction</h1>
-            <form action='/transactions/new' method='post'>
-                <label for='customer_id'>Customer:</label>
-                <select id='customer_id' name='customer_id' required>{customer_options}</select>
-                <label for='store_id'>Store:</label>
-                <select id='store_id' name='store_id' required>{store_options}</select>
-                <label for='amount'>Amount (USD):</label>
-                <input type='number' id='amount' name='amount' min='0.01' step='0.01' required value='{amount}'>
-                <label for='timestamp'>Timestamp:</label>
-                <input type='datetime-local' id='timestamp' name='timestamp' required value='{timestamp}'>
-                {duplicate_html}
-                <button type='submit'>Submit Transaction</button>
+@page_router.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request):
+    error = request.query_params.get("error")
+    next_url = request.query_params.get("next", "/transactions/entry")
+    html = f"""
+    <!DOCTYPE html>
+    <html lang='en'>
+    <head>
+        <meta charset='UTF-8'>
+        <title>Service Role Login</title>
+        <link rel='stylesheet' href='/static/styles.css'>
+        <style>.login-container{{max-width:400px;margin:4rem auto;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:2rem;}}.login-container h2{{text-align:center;color:#1a73e8;}}</style>
+    </head>
+    <body>
+        <div class='login-container'>
+            <h2>Service Role Login</h2>
+            {f"<div class='alert error'>{error}</div>" if error else ''}
+            <form method='post' action='/login'>
+                <input type='hidden' name='next' value='{next_url}'>
+                <label for='username'>Username:</label>
+                <input type='text' id='username' name='username' required autofocus>
+                <label for='password'>Password:</label>
+                <input type='password' id='password' name='password' required>
+                <button type='submit'>Login</button>
             </form>
-            {f"<div id='result'>{result}</div>" if result and not show_duplicate_options else ''}
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
-    @app.post("/transactions/new")
-    async def add_transaction(request: Request):
-        """
-        Allows a user to add a new transaction to the Transactions table.
-        Accepts both JSON and form submissions.
-        Deduplicates on customer_id, store_id, amount, timestamp before insert.
-        """
-        SUPABASE_URL = os.getenv("SUPABASE_URL")
-        SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            return JSONResponse(
-                {
-                    "status": "error",
-                    "message": "Supabase URL or service_role key not set in environment variables.",
-                },
-                status_code=500,
-            )
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+@page_router.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/transactions/entry"),
+):
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return HTMLResponse(
+            "<h2>Supabase URL or service_role key not set in environment variables.</h2>",
+            status_code=500,
+        )
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    import hashlib
 
-        form = await request.form()
-        if form:
-            customer_id = form.get("customer_id")
-            store_id = form.get("store_id")
-            amount = form.get("amount")
-            timestamp = form.get("timestamp")
-            is_form = True
-            action = form.get("duplicate_action")
-        else:
-            try:
-                data = await request.json()
-                customer_id = data.get("customer_id")
-                store_id = data.get("store_id")
-                amount = data.get("amount")
-                timestamp = data.get("timestamp")
-                is_form = False
-                action = data.get("duplicate_action")
-            except Exception as e:
-                return JSONResponse(
-                    {"status": "error", "message": f"Invalid input: {str(e)}"},
-                    status_code=400,
-                )
-
-        if not customer_id or not store_id or amount is None or not timestamp:
-            result_msg = "Missing required fields."
-            if is_form:
-                url = (
-                    request.url_for("transaction_entry_form") + f"?result={result_msg}"
-                )
-                return RedirectResponse(url, status_code=303)
-            return JSONResponse(
-                {"status": "error", "message": result_msg}, status_code=400
-            )
-        try:
-            amount = float(amount)
-        except Exception:
-            result_msg = "Amount must be a number."
-            if is_form:
-                url = (
-                    request.url_for("transaction_entry_form") + f"?result={result_msg}"
-                )
-                return RedirectResponse(url, status_code=303)
-            return JSONResponse(
-                {"status": "error", "message": result_msg}, status_code=400
-            )
-        if amount <= 0:
-            result_msg = "Amount must be greater than $0.00 USD."
-            if is_form:
-                url = (
-                    request.url_for("transaction_entry_form") + f"?result={result_msg}"
-                )
-                return RedirectResponse(url, status_code=303)
-            return JSONResponse(
-                {"status": "error", "message": result_msg}, status_code=400
-            )
-
-        # --- Deduplication logic ---
-        duplicate_query = (
-            supabase.table("Transactions")
-            .select("transaction_id, customer_id, store_id, amount, timestamp")
-            .eq("customer_id", customer_id)
-            .eq("store_id", store_id)
-            .eq("amount", amount)
-            .eq("timestamp", timestamp)
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    try:
+        resp = (
+            supabase.table("DashboardUsers")
+            .select("username, password_hash")
+            .eq("username", username)
             .execute()
         )
-        duplicates = (
-            duplicate_query.data
-            if hasattr(duplicate_query, "data")
-            else duplicate_query
+        users = resp.data if hasattr(resp, "data") else resp
+        if not users or users[0]["password_hash"] != password_hash:
+            return RedirectResponse(
+                f"/login?error=Invalid+username+or+password.&next={next}",
+                status_code=303,
+            )
+    except Exception as e:
+        return RedirectResponse(
+            f"/login?error=Auth+error:+{str(e)}&next={next}", status_code=303
         )
-        if duplicates and not action:
-            # Redirect back to form with message, pre-filled fields, and show radio buttons
-            result_msg = (
-                "Duplicate transaction detected! "
-                "A transaction with the same customer, store, amount, and timestamp already exists. "
-                "Please select how to proceed below."
-            )
-            # Pass all form fields and a flag to show radio buttons
-            url = request.url_for("transaction_entry_form").include_query_params(
-                result=result_msg,
-                customer_id=customer_id,
-                store_id=store_id,
-                amount=amount,
-                timestamp=timestamp,
-                show_duplicate_options="1",
-            )
-            return RedirectResponse(str(url), status_code=303)
-        elif duplicates and action == "block":
-            result_msg = "Duplicate transaction blocked. No new record inserted."
-            url = request.url_for("transaction_entry_form").include_query_params(
-                result=result_msg
-            )
-            return RedirectResponse(str(url), status_code=303)
-        elif duplicates and action == "prompt":
-            # Show details of duplicates in plain text
-            details = "; ".join(
-                [
-                    f"ID: {d['transaction_id']}, Customer: {d['customer_id']}, Store: {d['store_id']}, Amount: {d['amount']}, Timestamp: {d['timestamp']}"
-                    for d in duplicates
-                ]
-            )
-            result_msg = f"Duplicate(s) found: {details}"
-            url = request.url_for("transaction_entry_form").include_query_params(
-                result=result_msg
-            )
-            return RedirectResponse(str(url), status_code=303)
-        # If action == "allow" or no duplicates, proceed with insert
+    # Set session
+    request.session["username"] = username
+    return RedirectResponse(next, status_code=303)
 
+@page_router.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/", status_code=303)
+
+@page_router.get("/transactions/entry", response_class=HTMLResponse)
+async def transaction_entry_form(request: Request):
+    username = request.session.get("username")
+    if not username:
+        return RedirectResponse("/login?next=/transactions/entry", status_code=303)
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return HTMLResponse(
+            "<h2>Supabase URL or service_role key not set in environment variables.</h2>",
+            status_code=500,
+        )
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    try:
+        customers_resp = (
+            supabase.table("Customers_test")
+            .select("customer_id, first_name, last_name")
+            .execute()
+        )
+        stores_resp = supabase.table("Stores").select("store_id, name").execute()
+        customers = (
+            customers_resp.data
+            if hasattr(customers_resp, "data")
+            else customers_resp
+        )
+        stores = stores_resp.data if hasattr(stores_resp, "data") else stores_resp
+    except Exception as e:
+        return HTMLResponse(
+            f"<h2>Error fetching customers or stores: {str(e)}</h2>",
+            status_code=500,
+        )
+    result = request.query_params.get("result")
+    # Pre-fill fields if present
+    customer_id = request.query_params.get("customer_id", "")
+    store_id = request.query_params.get("store_id", "")
+    amount = request.query_params.get("amount", "")
+    timestamp = request.query_params.get("timestamp", "")
+    show_duplicate_options = request.query_params.get("show_duplicate_options")
+    context = {
+        "request": request,
+        "customers": customers,
+        "stores": stores,
+        "result": result,
+        "customer_id": customer_id,
+        "store_id": store_id,
+        "amount": amount,
+        "timestamp": timestamp,
+        "show_duplicate_options": show_duplicate_options,
+        "username": username,
+    }
+    return Jinja2Templates(directory="app/templates").TemplateResponse(
+        "transaction_entry.html", context
+    )
+
+@page_router.post("/transactions/new")
+async def add_transaction(request: Request):
+    """
+    Allows a user to add a new transaction to the Transactions table.
+    Accepts both JSON and form submissions.
+    Deduplicates on customer_id, store_id, amount, timestamp before insert.
+    """
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "Supabase URL or service_role key not set in environment variables.",
+            },
+            status_code=500,
+        )
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+    form = await request.form()
+    if form:
+        customer_id = form.get("customer_id")
+        store_id = form.get("store_id")
+        amount = form.get("amount")
+        timestamp = form.get("timestamp")
+        is_form = True
+        action = form.get("duplicate_action")
+    else:
         try:
-            resp = (
-                supabase.table("Transactions")
-                .insert(
-                    {
-                        "customer_id": customer_id,
-                        "store_id": store_id,
-                        "amount": amount,
-                        "timestamp": timestamp,
-                    }
-                )
-                .execute()
-            )
-            if hasattr(resp, "data") and resp.data:
-                result_msg = "Transaction added successfully!"
-                url = request.url_for("transaction_entry_form").include_query_params(
-                    result=result_msg
-                )
-                return RedirectResponse(str(url), status_code=303)
-            else:
-                result_msg = "Failed to add transaction."
-                url = request.url_for("transaction_entry_form").include_query_params(
-                    result=result_msg
-                )
-                return RedirectResponse(str(url), status_code=303)
+            data = await request.json()
+            customer_id = data.get("customer_id")
+            store_id = data.get("store_id")
+            amount = data.get("amount")
+            timestamp = data.get("timestamp")
+            is_form = False
+            action = data.get("duplicate_action")
         except Exception as e:
-            result_msg = f"Error: {str(e)}"
+            return JSONResponse(
+                {"status": "error", "message": f"Invalid input: {str(e)}"},
+                status_code=400,
+            )
+
+    if not customer_id or not store_id or amount is None or not timestamp:
+        result_msg = "Missing required fields."
+        if is_form:
+            url = (
+                request.url_for("transaction_entry_form") + f"?result={result_msg}"
+            )
+            return RedirectResponse(url, status_code=303)
+        return JSONResponse(
+            {"status": "error", "message": result_msg}, status_code=400
+        )
+    try:
+        amount = float(amount)
+    except Exception:
+        result_msg = "Amount must be a number."
+        if is_form:
+            url = (
+                request.url_for("transaction_entry_form") + f"?result={result_msg}"
+            )
+            return RedirectResponse(url, status_code=303)
+        return JSONResponse(
+            {"status": "error", "message": result_msg}, status_code=400
+        )
+    if amount <= 0:
+        result_msg = "Amount must be greater than $0.00 USD."
+        if is_form:
+            url = (
+                request.url_for("transaction_entry_form") + f"?result={result_msg}"
+            )
+            return RedirectResponse(url, status_code=303)
+        return JSONResponse(
+            {"status": "error", "message": result_msg}, status_code=400
+        )
+
+    # --- Deduplication logic ---
+    duplicate_query = (
+        supabase.table("Transactions")
+        .select("transaction_id, customer_id, store_id, amount, timestamp")
+        .eq("customer_id", customer_id)
+        .eq("store_id", store_id)
+        .eq("amount", amount)
+        .eq("timestamp", timestamp)
+        .execute()
+    )
+    duplicates = (
+        duplicate_query.data
+        if hasattr(duplicate_query, "data")
+        else duplicate_query
+    )
+    if duplicates and not action:
+        # Redirect back to form with message, pre-filled fields, and show radio buttons
+        result_msg = (
+            "Duplicate transaction detected! "
+            "A transaction with the same customer, store, amount, and timestamp already exists. "
+            "Please select how to proceed below."
+        )
+        # Pass all form fields and a flag to show radio buttons
+        url = request.url_for("transaction_entry_form").include_query_params(
+            result=result_msg,
+            customer_id=customer_id,
+            store_id=store_id,
+            amount=amount,
+            timestamp=timestamp,
+            show_duplicate_options="1",
+        )
+        return RedirectResponse(str(url), status_code=303)
+    elif duplicates and action == "block":
+        result_msg = "Duplicate transaction blocked. No new record inserted."
+        url = request.url_for("transaction_entry_form").include_query_params(
+            result=result_msg
+        )
+        return RedirectResponse(str(url), status_code=303)
+    elif duplicates and action == "prompt":
+        # Show details of duplicates in plain text
+        details = "; ".join(
+            [
+                f"ID: {d['transaction_id']}, Customer: {d['customer_id']}, Store: {d['store_id']}, Amount: {d['amount']}, Timestamp: {d['timestamp']}"
+                for d in duplicates
+            ]
+        )
+        result_msg = f"Duplicate(s) found: {details}"
+        url = request.url_for("transaction_entry_form").include_query_params(
+            result=result_msg
+        )
+        return RedirectResponse(str(url), status_code=303)
+    # If action == "allow" or no duplicates, proceed with insert
+
+    try:
+        resp = (
+            supabase.table("Transactions")
+            .insert(
+                {
+                    "customer_id": customer_id,
+                    "store_id": store_id,
+                    "amount": amount,
+                    "timestamp": timestamp,
+                }
+            )
+            .execute()
+        )
+        if hasattr(resp, "data") and resp.data:
+            result_msg = "Transaction added successfully!"
             url = request.url_for("transaction_entry_form").include_query_params(
                 result=result_msg
             )
             return RedirectResponse(str(url), status_code=303)
+        else:
+            result_msg = "Failed to add transaction."
+            url = request.url_for("transaction_entry_form").include_query_params(
+                result=result_msg
+            )
+            return RedirectResponse(str(url), status_code=303)
+    except Exception as e:
+        result_msg = f"Error: {str(e)}"
+        url = request.url_for("transaction_entry_form").include_query_params(
+            result=result_msg
+        )
+        return RedirectResponse(str(url), status_code=303)
+
+# Public endpoint: redacted data
+@api_router.get("/transactions/public")
+async def get_public_transactions():
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase URL or service_role key not set.")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    try:
+        customers_resp = supabase.table("Customers_test").select("customer_id, first_name, last_name, created_at").execute()
+        transactions_resp = supabase.table("Transactions").select("transaction_id, customer_id, store_id, amount, timestamp, description").execute()
+        customers = getattr(customers_resp, "data", None)
+        if customers is None or not isinstance(customers, list):
+            customers = []
+        transactions = getattr(transactions_resp, "data", None)
+        if transactions is None or not isinstance(transactions, list):
+            transactions = []
+        return {"customers": customers, "transactions": transactions}
+    except Exception as e:
+        logger.error(f"Error fetching public transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch public transactions")
+
+# Admin endpoint: full data, requires dashboard login
+@api_router.get("/transactions/admin")
+async def get_admin_transactions(credentials: HTTPBasicCredentials = Depends(security)):
+    username = credentials.username
+    password = credentials.password
+    import hashlib
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase URL or service_role key not set.")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    try:
+        resp = (
+            supabase.table("DashboardUsers")
+            .select("username, password_hash")
+            .eq("username", username)
+            .execute()
+        )
+        users = getattr(resp, "data", None)
+        if not users or users[0]["password_hash"] != password_hash:
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+    except Exception as e:
+        print("Exception in /api/v1/transactions/admin:", e)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Auth error: {str(e)}")
+    # Return full data from Supabase
+    try:
+        customers_resp = supabase.table("Customers_test").select("*").execute()
+        transactions_resp = supabase.table("Transactions").select("*").execute()
+        customers = getattr(customers_resp, "data", None)
+        if customers is None or not isinstance(customers, list):
+            customers = []
+        transactions = getattr(transactions_resp, "data", None)
+        if transactions is None or not isinstance(transactions, list):
+            transactions = []
+        return {"customers": customers, "transactions": transactions}
+    except Exception as e:
+        logger.error(f"Error fetching admin transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch admin transactions")
+
+@api_router.get("/transactions/recent")
+async def get_recent_transactions():
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase URL or service_role key not set.")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    try:
+        transactions_resp = supabase.table("Transactions") \
+            .select("transaction_id, customer_id, store_id, amount, timestamp, description") \
+            .order("timestamp", desc=True) \
+            .limit(20) \
+            .execute()
+        transactions = transactions_resp.data if hasattr(transactions_resp, "data") else transactions_resp
+        return {"transactions": transactions}
+    except Exception as e:
+        logger.error(f"Error fetching recent public transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch recent public transactions")
+
+@api_router.get("/transactions/recent/admin")
+async def get_recent_transactions_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    username = credentials.username
+    password = credentials.password
+    import hashlib
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase URL or service_role key not set.")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    try:
+        resp = (
+            supabase.table("DashboardUsers")
+            .select("username, password_hash")
+            .eq("username", username)
+            .execute()
+        )
+        users = resp.data if hasattr(resp, "data") else resp
+        if not users or users[0]["password_hash"] != password_hash:
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+    except Exception as e:
+        print("Exception in /transactions/recent/admin:", e)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Auth error: {str(e)}")
+    try:
+        transactions_resp = supabase.table("Transactions") \
+            .select("*") \
+            .order("timestamp", desc=True) \
+            .limit(20) \
+            .execute()
+        transactions = transactions_resp.data if hasattr(transactions_resp, "data") else transactions_resp
+        return {"transactions": transactions}
+    except Exception as e:
+        logger.error(f"Error fetching recent admin transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch recent admin transactions")
+
+@page_router.get("/transactions", response_class=HTMLResponse)
+async def transactions_page(request: Request):
+    return Jinja2Templates(directory="app/templates").TemplateResponse(
+        "transactions.html", {"request": request, "username": request.session.get("username")}
+    )
+
+@page_router.get("/transactions/admin-login", response_class=HTMLResponse)
+async def admin_login_page(request: Request, error: str = ""):
+    return Jinja2Templates(directory="app/templates").TemplateResponse(
+        "admin_login.html", {"request": request, "error": error}
+    )
+
+@page_router.post("/transactions/admin-login", response_class=HTMLResponse)
+async def admin_login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return HTMLResponse("<h2>Supabase URL or service_role key not set in environment variables.</h2>", status_code=500)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    import hashlib
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    users = supabase.table("DashboardUsers").select("username, password_hash").eq("username", username).execute().data
+    if not users or users[0]["password_hash"] != password_hash:
+        return Jinja2Templates(directory="app/templates").TemplateResponse(
+            "admin_login.html", {"request": request, "error": "Invalid username or password."}
+        )
+    request.session["username"] = username
+    return RedirectResponse("/transactions/admin", status_code=303)
+
+@page_router.get("/transactions/admin", response_class=HTMLResponse)
+async def admin_transactions_page(request: Request):
+    username = request.session.get("username")
+    if not username:
+        return RedirectResponse("/transactions/admin-login", status_code=303)
+    return Jinja2Templates(directory="app/templates").TemplateResponse(
+        "admin_transactions.html", {"request": request, "username": username}
+    )
+
+@page_router.get("/transactions/logout")
+async def admin_logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/transactions", status_code=303)
+
+@page_router.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/dashboard")
+
+__all__ = ["api_router", "page_router"]

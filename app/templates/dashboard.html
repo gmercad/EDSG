@@ -167,7 +167,7 @@
         <h2>Navigation</h2>
         <ul>
             <li><a href="/">Dashboard Home</a></li>
-            <li><a href="/transactions/entry">Enter Transaction</a></li>
+            <li><a href="/transactions">Transactions</a></li>
             <!-- Add more links as needed -->
         </ul>
     </div>
@@ -298,76 +298,84 @@ snapshotForm.addEventListener('submit', async function(e) {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('resultSection').style.display = 'none';
     const formData = new FormData(snapshotForm);
-    // Convert FormData to JSON
+    // Convert FormData to JSON with correct types
     const data = {};
     formData.forEach((value, key) => {
-        data[key] = value;
+        if (key === "indicator_codes") {
+            if (data[key]) {
+                data[key].push(value);
+            } else {
+                data[key] = [value];
+            }
+        } else if (key === "year") {
+            if (value !== "") {
+                data[key] = parseInt(value, 10);
+            }
+            // If blank, do not include year
+        } else {
+            data[key] = value;
+        }
     });
-    data['generate_snapshot'] = true;
-    const response = await fetch('/api/v1/dashboard', {
+    const response = await fetch('/api/v1/generate-snapshot', {
         method: 'POST',
-        headers: { 'Accept': 'application/json' },
-        body: new URLSearchParams(data)
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(data)
     });
     document.getElementById('loading').style.display = 'none';
+    const resultSection = document.getElementById('resultSection');
     if (response.ok) {
-        const html = await response.text();
-        // Replace the content of the result section
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const newResult = doc.getElementById('resultSection');
-        if (newResult) {
-            document.getElementById('resultSection').innerHTML = newResult.innerHTML;
-            document.getElementById('resultSection').style.display = 'block';
-            // --- PATCH: update follow-up form hidden fields and re-attach event listener ---
-            const newSnapshotKeyInput = document.querySelector('input[name="snapshot_key"]');
-            const newChatKeyInput = document.querySelector('input[name="chat_key"]');
-            // Try to extract new values from the DOM (if present)
-            if (newSnapshotKeyInput && data.metadata && data.metadata.snapshot_key) {
-                newSnapshotKeyInput.value = data.metadata.snapshot_key;
-            }
-            if (newChatKeyInput && data.metadata && data.metadata.chat_key) {
-                newChatKeyInput.value = data.metadata.chat_key;
-            }
-            // Re-attach follow-up form event listener
-            const followupForm = document.getElementById('followupForm');
-            if (followupForm) {
-                followupForm.addEventListener('submit', async function(e) {
-                    e.preventDefault();
-                    const snapshotKey = followupForm.querySelector('input[name="snapshot_key"]')?.value || '';
-                    const userQuestion = followupForm.querySelector('input[name="user_question"]')?.value || '';
-                    const chatKey = followupForm.querySelector('input[name="chat_key"]')?.value || null;
-                    console.log('snapshotKey:', snapshotKey);
-                    console.log('userQuestion:', userQuestion);
-                    console.log('chatKey:', chatKey);
-                    console.log({
+        const respData = await response.json();
+        // Update snapshot content
+        let html = '';
+        html += '<h3>Economic Development Snapshot</h3>';
+        html += '<div id="snapshotContent">';
+        html += '<div class="success"><strong>Generated for:</strong> ' + (respData.country_code || '') + '</div>';
+        html += '<div class="snapshot-text">' + (respData.snapshot_text ? respData.snapshot_text.replace(/\n/g, '<br>') : '') + '</div>';
+        html += '</div>';
+        html += '<hr>';
+        html += '<h4>Ask a follow-up question about this summary</h4>';
+        html += '<form id="followupForm" method="post" action="/api/v1/chat-followup">';
+        html += '<input type="hidden" name="snapshot_key" value="' + (respData.metadata && respData.metadata.snapshot_key ? respData.metadata.snapshot_key : '') + '">';
+        html += '<input type="hidden" name="chat_key" value="">';
+        html += '<input type="text" name="user_question" value="" style="width: 60%;">';
+        html += '<button type="submit">Ask</button>';
+        html += '</form>';
+        html += '<div id="chatAnswer" style="margin-top: 1em; color: #1a73e8;"></div>';
+        resultSection.innerHTML = html;
+        resultSection.style.display = 'block';
+        // Attach event listener to new followup form
+        const followupForm = document.getElementById('followupForm');
+        if (followupForm) {
+            followupForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const snapshotKey = followupForm.querySelector('input[name="snapshot_key"]').value || '';
+                const userQuestion = followupForm.querySelector('input[name="user_question"]').value || '';
+                const chatKey = followupForm.querySelector('input[name="chat_key"]').value || null;
+                const response = await fetch('/api/v1/chat-followup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
                         snapshot_key: snapshotKey,
                         user_question: userQuestion,
                         prev_chat_key: chatKey
-                    });
-                    const response = await fetch('/api/v1/chat-followup', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            snapshot_key: snapshotKey,
-                            user_question: userQuestion,
-                            prev_chat_key: chatKey
-                        })
-                    });
-                    const chatAnswerDiv = document.getElementById('chatAnswer');
-                    if (response.ok) {
-                        const data = await response.json();
-                        chatAnswerDiv.innerText = data.answer || 'No answer returned.';
-                    } else {
-                        chatAnswerDiv.innerText = 'Error: Could not get a response.';
-                    }
+                    })
                 });
-            }
-            // --- END PATCH ---
+                const chatAnswerDiv = document.getElementById('chatAnswer');
+                if (response.ok) {
+                    const data = await response.json();
+                    chatAnswerDiv.innerText = data.answer || 'No answer returned.';
+                    // Optionally update chat_key for follow-up
+                    if (data.chat_key) {
+                        followupForm.querySelector('input[name="chat_key"]').value = data.chat_key;
+                    }
+                } else {
+                    chatAnswerDiv.innerText = 'Error: Could not get a response.';
+                }
+            });
         }
     } else {
-        document.getElementById('resultSection').innerHTML = '<div class="error">Error generating snapshot. Please try again.</div>';
-        document.getElementById('resultSection').style.display = 'block';
+        resultSection.innerHTML = '<div class="error">Error generating snapshot. Please try again.</div>';
+        resultSection.style.display = 'block';
     }
 });
 

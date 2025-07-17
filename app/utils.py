@@ -342,15 +342,15 @@ async def call_llm(prompt: str, user_question: str) -> str:
     except httpx.RequestError as e:
         import logging
         logging.error(f"Network error communicating with LLM: {e}")
-        return f"Network error communicating with LLM: {str(e)}"
+        return f"Error communicating with LLM: {str(e)}"
     except httpx.HTTPStatusError as e:
         import logging
         logging.error(f"HTTP error from LLM: {e.response.status_code} {e.response.text}")
-        return f"HTTP error from LLM: {e.response.status_code} {e.response.text}"
+        return f"Error communicating with LLM: {e.response.status_code} {e.response.text}"
     except Exception as e:
         import logging
         logging.error(f"Unexpected error in call_llm: {e}")
-        return f"Unexpected error communicating with LLM: {str(e)}"
+        return f"Error communicating with LLM: {str(e)}"
 
 
 def validate_country_code(country_code: str) -> bool:
